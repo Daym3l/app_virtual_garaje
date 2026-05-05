@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="120dp"
+    android:height="120dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+
+    <!-- Outer ring -->
+    <path
+        android:pathData="M60,8 A52,52 0 1,1 59.9,8 Z"
+        android:strokeColor="#1A5B9DFF"
+        android:strokeWidth="1"
+        android:fillColor="#00000000"/>
+
+    <!-- Inner ring glow -->
+    <path
+        android:pathData="M60,18 A42,42 0 1,1 59.9,18 Z"
+        android:strokeColor="#2A5B9DFF"
+        android:strokeWidth="0.5"
+        android:fillColor="#00000000"/>
+
+    <!-- Garage door shape (simplified rectangle with panels) -->
+    <!-- Door frame -->
+    <path
+        android:pathData="M32,44 L32,82 L88,82 L88,44 Z"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="2"
+        android:fillColor="#0A1828"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+
+    <!-- Door panel lines -->
+    <path
+        android:pathData="M32,54 L88,54"
+        android:strokeColor="#3A5B9DFF"
+        android:strokeWidth="1"
+        android:fillColor="#00000000"/>
+    <path
+        android:pathData="M32,63 L88,63"
+        android:strokeColor="#3A5B9DFF"
+        android:strokeWidth="1"
+        android:fillColor="#00000000"/>
+    <path
+        android:pathData="M32,72 L88,72"
+        android:strokeColor="#3A5B9DFF"
+        android:strokeWidth="1"
+        android:fillColor="#00000000"/>
+
+    <!-- Door handle -->
+    <path
+        android:pathData="M50,63 L70,63"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="2.5"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"/>
+
+    <!-- Roof / building top -->
+    <path
+        android:pathData="M22,44 L60,28 L98,44"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+
+    <!-- Left wall -->
+    <path
+        android:pathData="M22,44 L22,82"
+        android:strokeColor="#3A5B9DFF"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"/>
+
+    <!-- Right wall -->
+    <path
+        android:pathData="M98,44 L98,82"
+        android:strokeColor="#3A5B9DFF"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"/>
+
+    <!-- Floor line -->
+    <path
+        android:pathData="M18,82 L102,82"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round"/>
+
+    <!-- Accent dot top of roof -->
+    <path
+        android:pathData="M60,25 A3,3 0 1,1 59.9,25 Z"
+        android:fillColor="#5B9DFF"/>
+
+    <!-- Small car silhouette inside -->
+    <path
+        android:pathData="M40,76 L40,69 L44,64 L53,62 L67,62 L72,65 L76,69 L76,76 Z"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="1.2"
+        android:fillColor="#0D1E30"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+
+    <!-- Car window -->
+    <path
+        android:pathData="M44,69 L46,64 L54,63 L54,69 Z"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="0.8"
+        android:fillColor="#0A1828"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+    <path
+        android:pathData="M56,63 L64,63 L68,69 L56,69 Z"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="0.8"
+        android:fillColor="#0A1828"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"/>
+
+    <!-- Left wheel -->
+    <path
+        android:pathData="M46,76 A4,4 0 1,1 45.9,76 Z"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="1.5"
+        android:fillColor="#03070F"/>
+
+    <!-- Right wheel -->
+    <path
+        android:pathData="M70,76 A4,4 0 1,1 69.9,76 Z"
+        android:strokeColor="#5B9DFF"
+        android:strokeWidth="1.5"
+        android:fillColor="#03070F"/>
+
+    <!-- Headlight glow dot -->
+    <path
+        android:pathData="M75,70 A2,2 0 1,1 74.9,70 Z"
+        android:fillColor="#5B9DFF"/>
+
+</vector>
