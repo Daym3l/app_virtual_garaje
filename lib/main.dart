@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/env.dart';
 import 'services/auth_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
@@ -9,9 +10,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   await Supabase.initialize(
-    url: 'https://xhriebayxtznjehmldhv.supabase.co',
-    anonKey:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhocmllYmF5eHR6bmplaG1sZGh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyODY5MTAsImV4cCI6MjA5Mjg2MjkxMH0.BnpaeDUe2joTRHe-9CyEOdOlvCqmyTkxxPYU2UgEpco',
+    url: Env.supabaseUrl,
+    anonKey: Env.supabaseAnonKey,
   );
 
   await AuthService.initialize();

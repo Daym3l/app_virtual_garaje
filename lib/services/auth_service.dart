@@ -1,9 +1,9 @@
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../config/env.dart';
 
 final _googleSignIn = GoogleSignIn(
-  serverClientId:
-      '396138173564-2hgdft0q611hat9450lgc172iuft9p21.apps.googleusercontent.com',
+  serverClientId: Env.googleServerClientId,
 );
 
 class AuthService {

@@ -46,3 +46,6 @@ app.*.map.json
 
 # Design handoff files
 /disenno/
+
+# Environment secrets
+.env
