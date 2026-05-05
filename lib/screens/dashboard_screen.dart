@@ -39,6 +39,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final data = await DashboardService.fetch(
         widget.vehicle.id,
         isElectric: widget.vehicle.isElectric,
+        currentMileage: widget.vehicle.km,
       );
       if (mounted) setState(() { _data = data; _loading = false; });
     } catch (e) {
@@ -59,19 +60,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                _HeroCard(vehicle: widget.vehicle),
-                const SizedBox(height: 16),
-                if (_loading)
-                  _SkeletonGrid()
-                else if (_error != null)
-                  _ErrorBanner(message: _error!, onRetry: _load)
-                else ...[
+                if (_loading) ...[
+                  _HeroCard(vehicle: widget.vehicle, data: null),
+                  const SizedBox(height: 10),
+                  _SkeletonGrid(),
+                ] else if (_error != null) ...[
+                  _HeroCard(vehicle: widget.vehicle, data: null),
+                  const SizedBox(height: 10),
+                  _ErrorBanner(message: _error!, onRetry: _load),
+                ] else ...[
+                  _HeroCard(vehicle: widget.vehicle, data: _data!),
+                  const SizedBox(height: 10),
+                  _AlertsSection(alerts: _data!.alerts),
+                  const SizedBox(height: 10),
                   _StatsGrid(vehicle: widget.vehicle, data: _data!),
                   const SizedBox(height: 16),
-                  if (_hasAlert(_data!)) ...[
-                    _AlertsSection(data: _data!),
-                    const SizedBox(height: 16),
-                  ],
                   _QuickActions(vehicle: widget.vehicle),
                 ],
               ]),
@@ -82,123 +85,97 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  bool _hasAlert(DashboardData d) {
-    if (d.nextMaintenanceDaysLeft == null) return false;
-    return d.nextMaintenanceDaysLeft! <= 30 || d.nextMaintenanceUrgent;
-  }
 }
 
 // ── Hero card ─────────────────────────────────────────────────────────────────
 
 class _HeroCard extends StatelessWidget {
-  const _HeroCard({required this.vehicle});
+  const _HeroCard({required this.vehicle, required this.data});
   final Vehicle vehicle;
+  final DashboardData? data;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0D2144), Color(0xFF0A1828)],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.accent.withValues(alpha: 0.25)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.accent.withValues(alpha: 0.08),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borderSubtle),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Vehicle icon big
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: AppColors.accent.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
-            ),
-            child: Center(
-              child: _BigVehicleIcon(vehicle: vehicle),
+          // Label superior
+          Text(
+            'VEHÍCULO ACTIVO',
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textTertiary,
+              letterSpacing: 1.2,
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  vehicle.displayName,
-                  style: GoogleFonts.inter(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
+          const SizedBox(height: 10),
+          // Icono + nombre + matrícula/año
+          Row(
+            children: [
+              _BigVehicleIcon(vehicle: vehicle),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _Chip(label: vehicle.plate, icon: Icons.credit_card),
-                    const SizedBox(width: 8),
-                    _Chip(
-                      label: _fuelLabel(vehicle),
-                      icon: vehicle.isElectric
-                          ? Icons.bolt
-                          : Icons.local_gas_station_outlined,
-                      color: vehicle.isElectric
-                          ? AppColors.success
-                          : AppColors.warning,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    const Icon(Icons.speed_rounded,
-                        size: 14, color: AppColors.textTertiary),
-                    const SizedBox(width: 4),
                     Text(
-                      _formatKm(vehicle.km),
-                      style: GoogleFonts.jetBrainsMono(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.accent,
-                      ),
-                    ),
-                    Text(
-                      '  odómetro',
+                      vehicle.displayName,
                       style: GoogleFonts.inter(
-                        fontSize: 11,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${vehicle.plate} · ${vehicle.year}',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
                         color: AppColors.textTertiary,
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Celdas odómetro + eficiencia
+          Row(
+            children: [
+              Expanded(
+                child: _HeroCell(
+                  label: 'ODÓMETRO',
+                  value: _formatKm(vehicle.km),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _HeroCell(
+                  label: 'EFICIENCIA',
+                  value: data?.avgConsumption != null
+                      ? data!.avgConsumption!.toStringAsFixed(1)
+                      : '—',
+                  unit: vehicle.isElectric ? 'kWh/100km' : 'L/100km',
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  String _fuelLabel(Vehicle v) {
-    switch (v.fuelType) {
-      case FuelType.diesel: return 'Diésel';
-      case FuelType.electrico: return 'Eléctrico';
-      case FuelType.hibrido: return 'Híbrido';
-      default: return 'Gasolina';
-    }
-  }
 
   String _formatKm(double km) {
     final n = km.toStringAsFixed(0);
@@ -207,38 +184,61 @@ class _HeroCard extends StatelessWidget {
       if (i > 0 && (n.length - i) % 3 == 0) buf.write('.');
       buf.write(n[i]);
     }
-    return '${buf.toString()} km';
+    return '${buf.toString()} Km';
   }
 }
 
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.icon, this.color});
+class _HeroCell extends StatelessWidget {
+  const _HeroCell({required this.label, required this.value, this.unit});
   final String label;
-  final IconData icon;
-  final Color? color;
+  final String value;
+  final String? unit;
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? AppColors.textTertiary;
     return Container(
-      padding: const EdgeInsets.fromLTRB(6, 3, 8, 3),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: c.withValues(alpha: 0.25)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 11, color: c),
-          const SizedBox(width: 4),
           Text(
             label,
-            style: GoogleFonts.inter(
-              fontSize: 11,
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 9,
               fontWeight: FontWeight.w600,
-              color: c,
+              color: AppColors.textTertiary,
+              letterSpacing: 1.0,
             ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                value,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              if (unit != null) ...[
+                const SizedBox(width: 4),
+                Text(
+                  unit!,
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
@@ -256,87 +256,68 @@ class _StatsGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isElectric = vehicle.isElectric;
+    final maintAlert = data.alerts.isEmpty ? null : data.alerts.first;
+    final maintColor = maintAlert == null
+        ? AppColors.success
+        : switch (maintAlert.level) {
+            AlertLevel.error => AppColors.danger,
+            AlertLevel.warning => AppColors.warning,
+            AlertLevel.info => AppColors.accent,
+          };
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: _StatCard(
-                icon: isElectric ? Icons.bolt : Icons.local_gas_station_outlined,
-                iconColor: isElectric ? AppColors.success : AppColors.warning,
-                label: isElectric ? 'Último carga' : 'Último repostaje',
-                value: data.lastFuelLiters != null
-                    ? '${data.lastFuelLiters!.toStringAsFixed(1)} ${isElectric ? 'kWh' : 'L'}'
-                    : '—',
-                sub: data.lastFuelDate != null
-                    ? _relativeDate(data.lastFuelDate!)
-                    : 'Sin registros',
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatCard(
-                icon: isElectric ? Icons.bolt_outlined : Icons.water_drop_outlined,
-                iconColor: AppColors.accent,
-                label: isElectric ? 'Consumo (kWh/100km)' : 'Eficiencia (L/100km)',
-                value: data.avgConsumption != null
-                    ? data.avgConsumption!.toStringAsFixed(1)
-                    : '—',
-                sub: data.avgConsumption != null
-                    ? 'promedio últimas cargas'
-                    : 'Sin datos suficientes',
-              ),
-            ),
-          ],
+        Text(
+          'RESUMEN',
+          style: GoogleFonts.jetBrainsMono(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textTertiary,
+            letterSpacing: 1.2,
+          ),
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _StatCard(
-                icon: Icons.build_outlined,
-                iconColor: _maintColor(data),
-                label: 'Próx. mantenimiento',
-                value: data.nextMaintenance ?? '—',
-                sub: _maintSub(data),
-                valueMaxLines: 2,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatCard(
-                icon: Icons.calendar_month_outlined,
-                iconColor: AppColors.accent,
-                label: 'Km este mes',
-                value: data.kmThisMonth > 0
-                    ? '${data.kmThisMonth.toStringAsFixed(0)} km'
-                    : '0 km',
-                sub: _monthLabel(),
-              ),
-            ),
-          ],
+        const SizedBox(height: 8),
+        _StatCard(
+          icon: isElectric ? Icons.bolt : Icons.local_gas_station_outlined,
+          iconColor: isElectric ? AppColors.success : AppColors.warning,
+          label: isElectric ? 'ÚLTIMO CARGA' : 'ÚLTIMO REPOSTAJE',
+          value: data.lastFuelLiters != null
+              ? '${data.lastFuelLiters!.toStringAsFixed(1)} ${isElectric ? 'kWh' : 'L'}'
+              : '—',
+          sub: _lastFuelSub(data, isElectric),
+          dot: null,
+        ),
+        const SizedBox(height: 8),
+        _StatCard(
+          icon: Icons.build_outlined,
+          iconColor: maintColor,
+          label: 'PRÓX. MANTENIMIENTO',
+          value: maintAlert?.type ?? 'Al día',
+          sub: maintAlert != null ? _maintSub(maintAlert) : 'Sin pendientes',
+          dot: maintAlert != null ? maintColor : null,
+        ),
+        const SizedBox(height: 8),
+        _StatCard(
+          icon: Icons.place_outlined,
+          iconColor: AppColors.accent,
+          label: 'KM ESTE MES',
+          value: _formatKmMes(data.kmThisMonth),
+          sub: '${_formatKm(vehicle.totalKm)} totales',
+          dot: null,
         ),
       ],
     );
   }
 
-  Color _maintColor(DashboardData d) {
-    if (d.nextMaintenanceUrgent) return AppColors.danger;
-    if (d.nextMaintenanceDaysLeft != null && d.nextMaintenanceDaysLeft! <= 14) {
-      return AppColors.warning;
-    }
-    return AppColors.success;
+  String _lastFuelSub(DashboardData d, bool isElectric) {
+    final parts = <String>[];
+    if (d.lastFuelCost != null) parts.add('\$${d.lastFuelCost!.toStringAsFixed(2)}');
+    if (d.lastFuelDate != null) parts.add(_relativeDate(d.lastFuelDate!));
+    return parts.isEmpty ? 'Sin registros' : parts.join(' · ');
   }
 
-  String _maintSub(DashboardData d) {
-    if (d.nextMaintenance == null) return 'Al día';
-    if (d.nextMaintenanceDaysLeft == null) return 'Pendiente';
-    final days = d.nextMaintenanceDaysLeft!;
-    if (days < 0) return 'Vencido hace ${(-days)} días';
-    if (days == 0) return 'Hoy';
-    return 'en $days días';
-  }
+  String _maintSub(MaintenanceAlert a) => a.subtitle;
 
   String _relativeDate(DateTime date) {
     final diff = DateTime.now().difference(date).inDays;
@@ -345,12 +326,21 @@ class _StatsGrid extends StatelessWidget {
     return 'hace $diff días';
   }
 
-  String _monthLabel() {
-    const months = [
-      '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-    ];
-    return months[DateTime.now().month];
+  String _formatKmMes(double km) {
+    if (km <= 0) return '0 km';
+    return '${_formatNum(km)} km';
+  }
+
+  String _formatKm(double km) => '${_formatNum(km)} km';
+
+  String _formatNum(double n) {
+    final s = n.toStringAsFixed(0);
+    final buf = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write('.');
+      buf.write(s[i]);
+    }
+    return buf.toString();
   }
 }
 
@@ -361,7 +351,7 @@ class _StatCard extends StatelessWidget {
     required this.label,
     required this.value,
     required this.sub,
-    this.valueMaxLines = 1,
+    required this.dot,
   });
 
   final IconData icon;
@@ -369,66 +359,76 @@ class _StatCard extends StatelessWidget {
   final String label;
   final String value;
   final String sub;
-  final int valueMaxLines;
+  final Color? dot; // null = sin punto
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.card,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.borderSubtle),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: iconColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(7),
-                ),
-                child: Icon(icon, size: 14, color: iconColor),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 20, color: iconColor),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
                   label,
-                  style: GoogleFonts.inter(
-                    fontSize: 10,
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w600,
                     color: AppColors.textTertiary,
-                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.8,
                   ),
-                  maxLines: 2,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                const SizedBox(height: 1),
+                Text(
+                  sub,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: AppColors.textTertiary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          if (dot != null)
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: dot,
+                shape: BoxShape.circle,
+                boxShadow: [BoxShadow(color: dot!.withValues(alpha: 0.5), blurRadius: 6)],
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: GoogleFonts.jetBrainsMono(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
             ),
-            maxLines: valueMaxLines,
-            overflow: TextOverflow.ellipsis,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            sub,
-            style: GoogleFonts.inter(
-              fontSize: 10,
-              color: AppColors.textTertiary,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
         ],
       ),
     );
@@ -438,65 +438,135 @@ class _StatCard extends StatelessWidget {
 // ── Alerts ────────────────────────────────────────────────────────────────────
 
 class _AlertsSection extends StatelessWidget {
-  const _AlertsSection({required this.data});
-  final DashboardData data;
+  const _AlertsSection({required this.alerts});
+  final List<MaintenanceAlert> alerts;
 
   @override
   Widget build(BuildContext context) {
-    final isUrgent = data.nextMaintenanceUrgent ||
-        (data.nextMaintenanceDaysLeft != null && data.nextMaintenanceDaysLeft! < 0);
-    final color = isUrgent ? AppColors.danger : AppColors.warning;
-    final days = data.nextMaintenanceDaysLeft;
+    if (alerts.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.borderSubtle),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.check_circle_outline,
+                size: 16, color: AppColors.success),
+            const SizedBox(width: 10),
+            Text(
+              'Sin alertas activas',
+              style: GoogleFonts.inter(
+                  fontSize: 12, color: AppColors.textTertiary),
+            ),
+          ],
+        ),
+      );
+    }
 
+    return Column(
+      children: alerts.map((a) => _AlertRow(alert: a)).toList(),
+    );
+  }
+}
+
+class _AlertRow extends StatelessWidget {
+  const _AlertRow({required this.alert});
+  final MaintenanceAlert alert;
+
+  Color get _color => switch (alert.level) {
+        AlertLevel.error => AppColors.danger,
+        AlertLevel.warning => AppColors.warning,
+        AlertLevel.info => AppColors.accent,
+      };
+
+  String get _badge => switch (alert.level) {
+        AlertLevel.error => 'URGENTE',
+        AlertLevel.warning => 'PRONTO',
+        AlertLevel.info => 'PRÓXIMO',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
-          Icon(
-            isUrgent ? Icons.warning_rounded : Icons.notifications_outlined,
-            size: 20,
-            color: color,
+          // Borde izquierdo 4px
+          Container(
+            width: 4,
+            height: 48,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(10),
+                bottomLeft: Radius.circular(10),
+              ),
+            ),
           ),
           const SizedBox(width: 12),
+          // Punto de color
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+            ),
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  isUrgent ? 'Mantenimiento urgente' : 'Mantenimiento próximo',
+                  alert.type,
                   style: GoogleFonts.inter(
                     fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: color,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 2),
                 Text(
-                  _alertBody(days),
+                  alert.subtitle,
                   style: GoogleFonts.inter(
                     fontSize: 11,
-                    color: AppColors.textSecondary,
+                    color: AppColors.textTertiary,
                   ),
                 ),
               ],
             ),
           ),
+          // Badge
+          Container(
+            margin: const EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              _badge,
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                color: color,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
         ],
       ),
     );
-  }
-
-  String _alertBody(int? days) {
-    final name = data.nextMaintenance ?? 'Mantenimiento';
-    if (days == null) return name;
-    if (days < 0) return '$name · Vencido hace ${-days} días';
-    if (days == 0) return '$name · Vence hoy';
-    return '$name · Vence en $days días';
   }
 }
 

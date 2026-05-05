@@ -13,6 +13,7 @@ class Vehicle {
     required this.model,
     required this.year,
     required this.km,
+    required this.initialKm,
     this.color,
     this.batteryCapacity,
     this.fuelTankCapacity,
@@ -28,12 +29,14 @@ class Vehicle {
   final String model;
   final int year;
   final double km;
+  final double initialKm;
   final String? color;
   final double? batteryCapacity;
   final double? fuelTankCapacity;
   final String? imageBase64;
 
   bool get isElectric => fuelType == FuelType.electrico;
+  double get totalKm => (km - initialKm).clamp(0, double.infinity);
 
   String get displayName => '$brand $model $year';
 
@@ -46,6 +49,7 @@ class Vehicle {
       plate: j['plate'] as String,
       color: j['color'] as String?,
       km: (j['current_mileage'] as num).toDouble(),
+      initialKm: (j['initial_mileage'] as num).toDouble(),
       type: _parseVehicleType(j['vehicle_type'] as String? ?? 'car'),
       fuelType: _parseFuelType(j['engine_type'] as String? ?? 'gasolina'),
       batteryCapacity: (j['battery_capacity'] as num?)?.toDouble(),
