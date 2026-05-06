@@ -49,3 +49,7 @@ app.*.map.json
 
 # Environment secrets
 .env
+
+# Firebase — contiene API keys, no versionar
+google-services.json
+GoogleService-Info.plist

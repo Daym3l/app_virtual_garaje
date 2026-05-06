@@ -155,8 +155,11 @@ Tema oscuro profundo, acento azul eléctrico. **Pixel-perfect respecto a los pro
 
 **user_profiles**
 - `id` uuid, `email`, `display_name`, `photo_url` text
-- `role`, `membership`, `membership_status` text
+- `role`, `membership`, `membership_status` text (`'active'` | `'revoked'` | `'expired'`)
+- `membership_expires_at` timestamptz (nullable — NULL = sin vencimiento = activo)
 - `legacy_firebase_uid` text (nullable)
+- `fcm_token` text (nullable) ← ya añadida
+- `fcm_token_updated_at` timestamptz (nullable) ← ya añadida
 
 **user_settings**
 - `user_id` uuid, `distance_unit`, `fuel_unit`, `theme` text
@@ -182,6 +185,59 @@ AuthGate (main.dart)
   → session != null → ShellScreen
 Supabase.onAuthStateChange reactivo — no polling
 ```
+
+## Sistema de Notificaciones Push (FCM)
+
+**Stack:** Supabase pg_cron → Edge Function (Deno/TS) → Firebase Cloud Messaging → Flutter
+
+### Estado actual
+
+- [x] Columnas `fcm_token` + `fcm_token_updated_at` añadidas a `user_profiles`
+- [x] Query de alertas validada en Supabase SQL Editor
+- [x] Firebase configurado — `google-services.json` + plugin gradle
+- [x] `FcmService` en `lib/services/fcm_service.dart` — token guardándose en BD ✓
+- [x] Función SQL `get_maintenance_alerts()` en Supabase
+- [x] Edge Function `send-maintenance-alerts` desplegada
+- [x] Variable `FIREBASE_SERVICE_ACCOUNT` en Supabase Secrets (FCM HTTP v1)
+- [x] pg_cron diario a las 14:00 UTC (10:00 AM Cuba)
+- [ ] Manejo notifs foreground/background/tap en Flutter — pendiente
+
+### Dependencias Flutter a añadir
+
+```yaml
+firebase_core: ^3.x
+firebase_messaging: ^15.x
+```
+
+### Integración en main.dart
+
+```dart
+await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+await FcmService().init();  // después de Supabase.initialize
+```
+
+`FcmService().clearToken()` se llama en `AuthService.signOut()`.
+
+### Lógica de alertas (query validada)
+
+- **Por fecha:** `next_date <= today + 7 días`
+- **Por km:** `current_mileage >= next_mileage - 500`
+- **Urgente:** `is_urgent = true` — siempre notifica
+
+### Gotchas de BD
+
+- `vehicles.user_id` es `text` aunque contiene UUIDs → join requiere `up.id::text`
+- `membership_status = 'active'` (sin 'd')
+- `membership_expires_at NULL` = plan sin vencimiento = activo
+- `next_date` y `next_mileage` pueden ser NULL — mantenimiento puede tener solo uno
+
+### Estructura Edge Function
+
+```
+supabase/functions/send-maintenance-alerts/index.ts
+```
+
+Llama a función SQL `get_maintenance_alerts()` (security definer) y envía vía FCM HTTP v1.
 
 ## Desarrollo pantalla a pantalla
 

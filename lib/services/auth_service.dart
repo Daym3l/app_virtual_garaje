@@ -1,6 +1,7 @@
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/env.dart';
+import 'fcm_service.dart';
 
 final _googleSignIn = GoogleSignIn(
   serverClientId: Env.googleServerClientId,
@@ -29,6 +30,7 @@ class AuthService {
   }
 
   static Future<void> signOut() async {
+    await FcmService().clearToken();
     await Future.wait([
       _googleSignIn.signOut(),
       _supabase.auth.signOut(),

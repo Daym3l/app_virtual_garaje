@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/env.dart';
 import 'services/auth_service.dart';
+import 'services/fcm_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/shell_screen.dart';
@@ -9,12 +11,15 @@ import 'screens/shell_screen.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await Firebase.initializeApp();
+
   await Supabase.initialize(
     url: Env.supabaseUrl,
     anonKey: Env.supabaseAnonKey,
   );
 
   await AuthService.initialize();
+  await FcmService().init();
 
   runApp(const GarajeApp());
 }
@@ -41,7 +46,7 @@ class _AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<_AuthGate> {
-  bool _loggedIn = false;
+  bool? _loggedIn;
 
   @override
   void initState() {
@@ -56,9 +61,17 @@ class _AuthGateState extends State<_AuthGate> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loggedIn) {
-      return const ShellScreen();
+    if (_loggedIn == null) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(
+            color: AppColors.accent,
+            strokeWidth: 2,
+          ),
+        ),
+      );
     }
+    if (_loggedIn!) return const ShellScreen();
     return const LoginScreen();
   }
 }
