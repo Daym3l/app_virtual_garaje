@@ -351,7 +351,6 @@ class _TrackingSheetState extends State<_TrackingSheet> {
         averageSpeed: avgSpeed,
       );
     } catch (e) {
-      debugPrint('saveRoute error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error al guardar: $e'), backgroundColor: AppColors.danger),
@@ -429,7 +428,7 @@ class _TrackingSheetState extends State<_TrackingSheet> {
                 children: [
                   TileLayer(
                     urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.example.app_virtual_garaje',
+                    userAgentPackageName: 'com.daym3l.virtualgaraje',
                   ),
                   if (_points.length >= 2)
                     PolylineLayer(
@@ -542,7 +541,7 @@ class _RouteDetailScreen extends StatelessWidget {
               children: [
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.app_virtual_garaje',
+                  userAgentPackageName: 'com.daym3l.virtualgaraje',
                 ),
                 if (route.points.length >= 2)
                   PolylineLayer(

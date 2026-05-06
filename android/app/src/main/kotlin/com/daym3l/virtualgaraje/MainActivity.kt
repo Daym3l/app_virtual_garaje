@@ -1,4 +1,4 @@
-package com.example.app_virtual_garaje
+package com.daym3l.virtualgaraje
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

@@ -53,3 +53,8 @@ app.*.map.json
 # Firebase — contiene API keys, no versionar
 google-services.json
 GoogleService-Info.plist
+
+# Android signing — nunca versionar
+android/key.properties
+android/app/*.jks
+android/app/*.keystore

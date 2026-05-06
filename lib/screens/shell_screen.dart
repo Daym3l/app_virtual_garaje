@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -5,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/auth_service.dart';
 import '../services/vehicle_service.dart';
+import '../services/fcm_service.dart';
 import 'dashboard_screen.dart';
 import 'mileage_screen.dart';
 import 'fuel_screen.dart';
@@ -40,11 +42,21 @@ class _ShellScreenState extends State<ShellScreen> {
   Color _snackColor = AppColors.success;
 
   VoidCallback? _fabAction;
+  StreamSubscription? _fcmSub;
 
   @override
   void initState() {
     super.initState();
     _loadVehicles();
+    _fcmSub = FcmService.navigateToMaintenance.stream.listen((_) {
+      if (mounted) setState(() { _tab = AppTab.maintenance; _fabAction = null; });
+    });
+  }
+
+  @override
+  void dispose() {
+    _fcmSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadVehicles() async {

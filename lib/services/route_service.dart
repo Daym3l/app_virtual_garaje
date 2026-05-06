@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -154,7 +153,6 @@ class RouteService {
   static double _deg2rad(double d) => d * pi / 180;
 
   static Future<List<RouteRecord>> fetchRoutes(String vehicleId) async {
-    debugPrint('fetchRoutes vehicleId=$vehicleId');
     final data = await _db
         .from('routes')
         .select('id, vehicle_id, start_time, end_time, total_distance, average_speed, notes, points')
@@ -162,8 +160,7 @@ class RouteService {
         .order('start_time', ascending: false)
         .limit(20)
         .timeout(const Duration(seconds: 10));
-    debugPrint('fetchRoutes got ${(data as List).length} rows');
-    return data.map((j) => RouteRecord.fromJson(j)).toList();
+    return (data as List).map((j) => RouteRecord.fromJson(j)).toList();
   }
 
   static Future<void> saveRoute({

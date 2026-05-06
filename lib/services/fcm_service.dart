@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -5,6 +6,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 Future<void> _backgroundHandler(RemoteMessage message) async {}
 
 class FcmService {
+  static final navigateToMaintenance = StreamController<void>.broadcast();
+
   final _messaging = FirebaseMessaging.instance;
   final _supabase = Supabase.instance.client;
 
@@ -25,6 +28,10 @@ class FcmService {
 
     FirebaseMessaging.onMessage.listen(_onForegroundMessage);
     FirebaseMessaging.onMessageOpenedApp.listen(_onNotificationTap);
+
+    // App abierta desde notif con app cerrada
+    final initial = await _messaging.getInitialMessage();
+    if (initial != null) _onNotificationTap(initial);
   }
 
   Future<void> _saveToken(String token) async {
@@ -47,13 +54,9 @@ class FcmService {
     }).eq('id', userId);
   }
 
-  void _onForegroundMessage(RemoteMessage message) {
-    // App en primer plano — FCM no muestra notif automáticamente en Android
-    // La pantalla de mantenimiento puede escuchar este stream si necesita reaccionar
-  }
+  void _onForegroundMessage(RemoteMessage message) {}
 
   void _onNotificationTap(RemoteMessage message) {
-    // Usuario tocó notif con app en background
-    // Navegar a mantenimiento cuando esté implementada esa pantalla
+    navigateToMaintenance.add(null);
   }
 }
