@@ -4,9 +4,11 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
+import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/vehicle_service.dart';
 import '../services/fcm_service.dart';
+import '../services/profile_service.dart';
 import 'dashboard_screen.dart';
 import 'mileage_screen.dart';
 import 'fuel_screen.dart';
@@ -43,11 +45,13 @@ class _ShellScreenState extends State<ShellScreen> {
 
   VoidCallback? _fabAction;
   StreamSubscription? _fcmSub;
+  UserProfile? _profile;
 
   @override
   void initState() {
     super.initState();
     _loadVehicles();
+    _loadProfile();
     _fcmSub = FcmService.navigateToMaintenance.stream.listen((_) {
       if (mounted) setState(() { _tab = AppTab.maintenance; _fabAction = null; });
     });
@@ -58,6 +62,13 @@ class _ShellScreenState extends State<ShellScreen> {
     _fcmSub?.cancel();
     super.dispose();
   }
+
+  Future<void> _loadProfile() async {
+    final profile = await ProfileService.fetchProfile();
+    if (mounted) setState(() => _profile = profile);
+  }
+
+  bool get _isPaidMember => _profile?.isPaidMember ?? false;
 
   Future<void> _loadVehicles() async {
     try {
@@ -141,6 +152,7 @@ class _ShellScreenState extends State<ShellScreen> {
                       activeTab: _tab,
                       onTabChanged: (t) => setState(() { _tab = t; _fabAction = null; }),
                       isElectric: _activeVehicle?.isElectric ?? false,
+                      isPaidMember: _isPaidMember,
                     ),
                   ),
 
@@ -244,6 +256,7 @@ class _ShellScreenState extends State<ShellScreen> {
       case AppTab.home:
         return DashboardScreen(
           vehicle: _activeVehicle!,
+          isPaidMember: _isPaidMember,
           onSwitchTab: (t) => setState(() { _tab = t; _fabAction = null; }),
         );
       case AppTab.kms:
@@ -268,6 +281,7 @@ class _ShellScreenState extends State<ShellScreen> {
           }),
         );
       case AppTab.routes:
+        if (!_isPaidMember) return const _UpgradeScreen();
         return RouteScreen(
           vehicle: _activeVehicle!,
           onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -277,6 +291,52 @@ class _ShellScreenState extends State<ShellScreen> {
       default:
         return const SizedBox.shrink();
     }
+  }
+}
+
+// ── Upgrade screen ────────────────────────────────────────────────────────────
+
+class _UpgradeScreen extends StatelessWidget {
+  const _UpgradeScreen();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72, height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.accent.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+              ),
+              child: const Icon(Icons.lock_outline_rounded, size: 34, color: AppColors.accent),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Función Premium',
+              style: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'El registro de rutas con GPS está disponible en los planes Premium y Enterprise.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(fontSize: 13, color: AppColors.textTertiary, height: 1.5),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Solicita tu upgrade desde el sitio web.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(fontSize: 13, color: AppColors.accent, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -415,11 +475,12 @@ class _Avatar extends StatelessWidget {
 // ── BottomNav ─────────────────────────────────────────────────────────────────
 
 class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.activeTab, required this.onTabChanged, required this.isElectric});
+  const _BottomNav({required this.activeTab, required this.onTabChanged, required this.isElectric, required this.isPaidMember});
 
   final int activeTab;
   final ValueChanged<int> onTabChanged;
   final bool isElectric;
+  final bool isPaidMember;
 
   List<_NavItem> get _items => [
     const _NavItem('Inicio',   Icons.home_rounded,          Icons.home_outlined),
@@ -441,6 +502,10 @@ class _BottomNav extends StatelessWidget {
       child: Row(
         children: List.generate(_items.length, (i) {
           final active = i == activeTab;
+          final locked = i == AppTab.routes && !isPaidMember;
+          final iconColor = locked
+              ? AppColors.textTertiary.withValues(alpha: 0.4)
+              : active ? AppColors.accent : AppColors.textTertiary;
           return Expanded(
             child: GestureDetector(
               onTap: () => onTabChanged(i),
@@ -450,13 +515,30 @@ class _BottomNav extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      active ? _items[i].icon : _items[i].iconOutlined,
-                      size: 22,
-                      color: active ? AppColors.accent : AppColors.textTertiary,
-                      shadows: active
-                          ? [Shadow(color: AppColors.accent.withValues(alpha: 0.7), blurRadius: 8)]
-                          : null,
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Icon(
+                          active ? _items[i].icon : _items[i].iconOutlined,
+                          size: 22,
+                          color: iconColor,
+                          shadows: active && !locked
+                              ? [Shadow(color: AppColors.accent.withValues(alpha: 0.7), blurRadius: 8)]
+                              : null,
+                        ),
+                        if (locked)
+                          Positioned(
+                            right: -4, bottom: -4,
+                            child: Container(
+                              width: 12, height: 12,
+                              decoration: BoxDecoration(
+                                color: AppColors.surface,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.lock_rounded, size: 9, color: AppColors.textTertiary),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 3),
                     Text(
@@ -464,7 +546,7 @@ class _BottomNav extends StatelessWidget {
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 9,
                         fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-                        color: active ? AppColors.accent : AppColors.textTertiary,
+                        color: iconColor,
                       ),
                     ),
                   ],

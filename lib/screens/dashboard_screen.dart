@@ -9,10 +9,12 @@ class DashboardScreen extends StatefulWidget {
     super.key,
     required this.vehicle,
     this.onSwitchTab,
+    this.isPaidMember = false,
   });
 
   final Vehicle vehicle;
   final ValueChanged<int>? onSwitchTab;
+  final bool isPaidMember;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -80,7 +82,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const SizedBox(height: 10),
                   _StatsGrid(vehicle: widget.vehicle, data: _data!),
                   const SizedBox(height: 16),
-                  _QuickActions(vehicle: widget.vehicle, onSwitchTab: widget.onSwitchTab),
+                  _QuickActions(vehicle: widget.vehicle, onSwitchTab: widget.onSwitchTab, isPaidMember: widget.isPaidMember),
                 ],
               ]),
             ),
@@ -578,9 +580,10 @@ class _AlertRow extends StatelessWidget {
 // ── Quick actions ─────────────────────────────────────────────────────────────
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.vehicle, this.onSwitchTab});
+  const _QuickActions({required this.vehicle, this.onSwitchTab, this.isPaidMember = false});
   final Vehicle vehicle;
   final ValueChanged<int>? onSwitchTab;
+  final bool isPaidMember;
 
   @override
   Widget build(BuildContext context) {
@@ -624,9 +627,9 @@ class _QuickActions extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: _ActionButton(
-                icon: Icons.place_rounded,
+                icon: isPaidMember ? Icons.place_rounded : Icons.lock_outline_rounded,
                 label: 'Ruta',
-                accent: true,
+                accent: isPaidMember,
                 onTap: () => onSwitchTab?.call(4),
               ),
             ),
