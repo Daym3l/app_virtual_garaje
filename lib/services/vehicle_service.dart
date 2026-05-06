@@ -24,4 +24,16 @@ class VehicleService {
         .update({'current_mileage': km, 'updated_at': DateTime.now().toIso8601String()})
         .eq('id', vehicleId);
   }
+
+  static Future<void> setFavorite(String vehicleId) async {
+    if (_userId == null) return;
+    await _db
+        .from('vehicles')
+        .update({'is_favorite': false})
+        .eq('user_id', _userId!);
+    await _db
+        .from('vehicles')
+        .update({'is_favorite': true})
+        .eq('id', vehicleId);
+  }
 }

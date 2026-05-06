@@ -18,6 +18,7 @@ class Vehicle {
     this.batteryCapacity,
     this.fuelTankCapacity,
     this.imageBase64,
+    this.isFavorite = false,
   });
 
   final String id;
@@ -34,6 +35,7 @@ class Vehicle {
   final double? batteryCapacity;
   final double? fuelTankCapacity;
   final String? imageBase64;
+  final bool isFavorite;
 
   bool get isElectric => fuelType == FuelType.electrico;
   double get totalKm => (km - initialKm).clamp(0, double.infinity);
@@ -55,6 +57,7 @@ class Vehicle {
       batteryCapacity: (j['battery_capacity'] as num?)?.toDouble(),
       fuelTankCapacity: (j['fuel_tank_capacity'] as num?)?.toDouble(),
       imageBase64: j['image_base64'] as String?,
+      isFavorite: j['is_favorite'] as bool? ?? false,
       name: '${j['brand']} ${j['model']}',
     );
   }

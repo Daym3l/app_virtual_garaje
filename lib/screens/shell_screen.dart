@@ -6,6 +6,10 @@ import '../models/vehicle.dart';
 import '../services/auth_service.dart';
 import '../services/vehicle_service.dart';
 import 'dashboard_screen.dart';
+import 'mileage_screen.dart';
+import 'fuel_screen.dart';
+import 'maintenance_screen.dart';
+import 'route_screen.dart';
 
 // ── Tab index constants ───────────────────────────────────────────────────────
 
@@ -35,6 +39,8 @@ class _ShellScreenState extends State<ShellScreen> {
   String? _snackMessage;
   Color _snackColor = AppColors.success;
 
+  VoidCallback? _fabAction;
+
   @override
   void initState() {
     super.initState();
@@ -47,7 +53,8 @@ class _ShellScreenState extends State<ShellScreen> {
       if (mounted) {
         setState(() {
           _vehicles = list;
-          _activeVehicle = list.isNotEmpty ? list.first : null;
+          final favorite = list.where((v) => v.isFavorite).firstOrNull;
+          _activeVehicle = favorite ?? (list.isNotEmpty ? list.first : null);
           _loadingVehicles = false;
         });
       }
@@ -120,12 +127,13 @@ class _ShellScreenState extends State<ShellScreen> {
                     left: 0, right: 0, bottom: 0,
                     child: _BottomNav(
                       activeTab: _tab,
-                      onTabChanged: (t) => setState(() => _tab = t),
+                      onTabChanged: (t) => setState(() { _tab = t; _fabAction = null; }),
+                      isElectric: _activeVehicle?.isElectric ?? false,
                     ),
                   ),
 
                   // FAB
-                  _FabButton(tab: _tab, onPressed: () => _showSnack('FAB tapped')),
+                  _FabButton(tab: _tab, onPressed: _fabAction ?? () {}, isElectric: _activeVehicle?.isElectric ?? false),
 
                   // Drawer overlay
                   if (_drawerOpen)
@@ -146,6 +154,11 @@ class _ShellScreenState extends State<ShellScreen> {
                       activeVehicle: _activeVehicle,
                       onVehicleSelected: _setVehicle,
                       onClose: () => setState(() => _drawerOpen = false),
+                      onFavorite: (id) async {
+                        await VehicleService.setFavorite(id);
+                        await _loadVehicles();
+                      },
+                      onRefresh: _loadVehicles,
                     ),
                   ),
 
@@ -164,27 +177,93 @@ class _ShellScreenState extends State<ShellScreen> {
   Widget _tabBody() {
     if (_activeVehicle == null) {
       return Center(
-        child: Text(
-          'Sin vehículos registrados',
-          style: GoogleFonts.inter(fontSize: 15, color: AppColors.textTertiary),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64, height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.borderSubtle),
+                ),
+                child: const Icon(Icons.directions_car_outlined, size: 32, color: AppColors.textTertiary),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Sin vehículos registrados',
+                style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Añade tus vehículos desde el sitio web y regresa aquí para gestionarlos.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(fontSize: 13, color: AppColors.textTertiary, height: 1.5),
+              ),
+              const SizedBox(height: 24),
+              GestureDetector(
+                onTap: _loadVehicles,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.borderSubtle),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.refresh_rounded, size: 16, color: AppColors.textSecondary),
+                      const SizedBox(width: 8),
+                      Text('Actualizar', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     switch (_tab) {
       case AppTab.home:
-        return DashboardScreen(vehicle: _activeVehicle!);
-      default:
-        final labels = ['', 'Kilometraje', 'Combustible', 'Mantenimiento', 'Rutas'];
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 56),
-          child: Center(
-            child: Text(
-              labels[_tab],
-              style: GoogleFonts.inter(fontSize: 18, color: AppColors.textTertiary),
-            ),
-          ),
+        return DashboardScreen(
+          vehicle: _activeVehicle!,
+          onSwitchTab: (t) => setState(() { _tab = t; _fabAction = null; }),
         );
+      case AppTab.kms:
+        return MileageScreen(
+          vehicle: _activeVehicle!,
+          onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _fabAction = fn);
+          }),
+        );
+      case AppTab.fuel:
+        return FuelScreen(
+          vehicle: _activeVehicle!,
+          onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _fabAction = fn);
+          }),
+        );
+      case AppTab.maintenance:
+        return MaintenanceScreen(
+          vehicle: _activeVehicle!,
+          onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _fabAction = fn);
+          }),
+        );
+      case AppTab.routes:
+        return RouteScreen(
+          vehicle: _activeVehicle!,
+          onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _fabAction = fn);
+          }),
+        );
+      default:
+        return const SizedBox.shrink();
     }
   }
 }
@@ -324,17 +403,18 @@ class _Avatar extends StatelessWidget {
 // ── BottomNav ─────────────────────────────────────────────────────────────────
 
 class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.activeTab, required this.onTabChanged});
+  const _BottomNav({required this.activeTab, required this.onTabChanged, required this.isElectric});
 
   final int activeTab;
   final ValueChanged<int> onTabChanged;
+  final bool isElectric;
 
-  static const _items = [
-    _NavItem('Inicio',       Icons.home_rounded,       Icons.home_outlined),
-    _NavItem('Km',           Icons.speed_rounded,      Icons.speed_outlined),
-    _NavItem('Combustible',  Icons.local_gas_station,  Icons.local_gas_station_outlined),
-    _NavItem('Manten.',      Icons.build_rounded,      Icons.build_outlined),
-    _NavItem('Rutas',        Icons.place_rounded,      Icons.place_outlined),
+  List<_NavItem> get _items => [
+    const _NavItem('Inicio',   Icons.home_rounded,          Icons.home_outlined),
+    const _NavItem('Km',       Icons.speed_rounded,         Icons.speed_outlined),
+    _NavItem(isElectric ? 'Energía' : 'Combustible', Icons.local_gas_station, Icons.local_gas_station_outlined),
+    const _NavItem('Manten.',  Icons.build_rounded,         Icons.build_outlined),
+    const _NavItem('Rutas',    Icons.place_rounded,         Icons.place_outlined),
   ];
 
   @override
@@ -402,12 +482,16 @@ class _VehicleDrawer extends StatelessWidget {
     required this.activeVehicle,
     required this.onVehicleSelected,
     required this.onClose,
+    required this.onFavorite,
+    required this.onRefresh,
   });
 
   final List<Vehicle> vehicles;
   final Vehicle? activeVehicle;
   final ValueChanged<Vehicle> onVehicleSelected;
   final VoidCallback onClose;
+  final ValueChanged<String> onFavorite;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -454,9 +538,13 @@ class _VehicleDrawer extends StatelessWidget {
                   ),
                 ),
                 GestureDetector(
+                  onTap: onRefresh,
+                  child: const Icon(Icons.refresh_rounded, color: AppColors.textTertiary, size: 20),
+                ),
+                const SizedBox(width: 12),
+                GestureDetector(
                   onTap: onClose,
-                  child: const Icon(Icons.close,
-                      color: AppColors.textTertiary, size: 20),
+                  child: const Icon(Icons.close, color: AppColors.textTertiary, size: 20),
                 ),
               ],
             ),
@@ -527,20 +615,14 @@ class _VehicleDrawer extends StatelessWidget {
                             ],
                           ),
                         ),
-                        if (active)
-                          Container(
-                            width: 8, height: 8,
-                            decoration: BoxDecoration(
-                              color: AppColors.accent,
-                              shape: BoxShape.circle,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: AppColors.accent.withValues(alpha: 0.6),
-                                  blurRadius: 6,
-                                ),
-                              ],
-                            ),
+                        GestureDetector(
+                          onTap: () => onFavorite(v.id),
+                          child: Icon(
+                            v.isFavorite ? Icons.star_rounded : Icons.star_outline_rounded,
+                            size: 20,
+                            color: v.isFavorite ? AppColors.warning : AppColors.textTertiary,
                           ),
+                        ),
                       ],
                     ),
                   ),
@@ -597,9 +679,10 @@ class _VehicleDrawer extends StatelessWidget {
 // ── FAB ───────────────────────────────────────────────────────────────────────
 
 class _FabButton extends StatefulWidget {
-  const _FabButton({required this.tab, required this.onPressed});
+  const _FabButton({required this.tab, required this.onPressed, required this.isElectric});
   final int tab;
   final VoidCallback onPressed;
+  final bool isElectric;
 
   @override
   State<_FabButton> createState() => _FabButtonState();
@@ -611,7 +694,7 @@ class _FabButtonState extends State<_FabButton> {
   String get _label {
     switch (widget.tab) {
       case AppTab.kms: return 'Registrar km';
-      case AppTab.fuel: return 'Repostar';
+      case AppTab.fuel: return widget.isElectric ? 'Cargar energía' : 'Repostar';
       case AppTab.maintenance: return 'Mantenimiento';
       case AppTab.routes: return '▶ INICIAR RUTA';
       default: return '';

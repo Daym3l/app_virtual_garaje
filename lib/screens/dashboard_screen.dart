@@ -5,9 +5,14 @@ import '../models/vehicle.dart';
 import '../services/dashboard_service.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key, required this.vehicle});
+  const DashboardScreen({
+    super.key,
+    required this.vehicle,
+    this.onSwitchTab,
+  });
 
   final Vehicle vehicle;
+  final ValueChanged<int>? onSwitchTab;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -75,7 +80,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   const SizedBox(height: 10),
                   _StatsGrid(vehicle: widget.vehicle, data: _data!),
                   const SizedBox(height: 16),
-                  _QuickActions(vehicle: widget.vehicle),
+                  _QuickActions(vehicle: widget.vehicle, onSwitchTab: widget.onSwitchTab),
                 ],
               ]),
             ),
@@ -573,8 +578,9 @@ class _AlertRow extends StatelessWidget {
 // ── Quick actions ─────────────────────────────────────────────────────────────
 
 class _QuickActions extends StatelessWidget {
-  const _QuickActions({required this.vehicle});
+  const _QuickActions({required this.vehicle, this.onSwitchTab});
   final Vehicle vehicle;
+  final ValueChanged<int>? onSwitchTab;
 
   @override
   Widget build(BuildContext context) {
@@ -596,7 +602,7 @@ class _QuickActions extends StatelessWidget {
               child: _ActionButton(
                 icon: Icons.speed_rounded,
                 label: 'Registrar km',
-                onTap: () {},
+                onTap: () => onSwitchTab?.call(1),
               ),
             ),
             const SizedBox(width: 10),
@@ -604,15 +610,24 @@ class _QuickActions extends StatelessWidget {
               child: _ActionButton(
                 icon: vehicle.isElectric ? Icons.bolt : Icons.local_gas_station,
                 label: vehicle.isElectric ? 'Cargar' : 'Repostar',
-                onTap: () {},
+                onTap: () => onSwitchTab?.call(2),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: _ActionButton(
                 icon: Icons.build_rounded,
-                label: 'Mantenimiento',
-                onTap: () {},
+                label: 'Manten.',
+                onTap: () => onSwitchTab?.call(3),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _ActionButton(
+                icon: Icons.place_rounded,
+                label: 'Ruta',
+                accent: true,
+                onTap: () => onSwitchTab?.call(4),
               ),
             ),
           ],
@@ -627,10 +642,12 @@ class _ActionButton extends StatefulWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.accent = false,
   });
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final bool accent;
 
   @override
   State<_ActionButton> createState() => _ActionButtonState();
@@ -652,9 +669,13 @@ class _ActionButtonState extends State<_ActionButton> {
         transformAlignment: Alignment.center,
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          color: _pressed ? AppColors.cardHover : AppColors.card,
+          color: widget.accent
+              ? (_pressed ? AppColors.accent.withValues(alpha: 0.85) : AppColors.accent.withValues(alpha: 0.15))
+              : (_pressed ? AppColors.cardHover : AppColors.card),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.borderSubtle),
+          border: Border.all(
+            color: widget.accent ? AppColors.accent.withValues(alpha: 0.5) : AppColors.borderSubtle,
+          ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
