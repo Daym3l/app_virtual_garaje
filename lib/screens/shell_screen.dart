@@ -69,6 +69,7 @@ class _ShellScreenState extends State<ShellScreen> {
   }
 
   bool get _isPaidMember => _profile?.isPaidMember ?? false;
+  bool get _canAccessRoutes => _profile?.canAccessRoutes ?? false;
 
   Future<void> _loadVehicles() async {
     try {
@@ -153,11 +154,12 @@ class _ShellScreenState extends State<ShellScreen> {
                       onTabChanged: (t) => setState(() { _tab = t; _fabAction = null; }),
                       isElectric: _activeVehicle?.isElectric ?? false,
                       isPaidMember: _isPaidMember,
+                      canAccessRoutes: _canAccessRoutes,
                     ),
                   ),
 
                   // FAB
-                  _FabButton(tab: _tab, onPressed: _fabAction ?? () {}, isElectric: _activeVehicle?.isElectric ?? false),
+                  _FabButton(tab: _tab, onPressed: _fabAction ?? () {}, isElectric: _activeVehicle?.isElectric ?? false, canAccessRoutes: _canAccessRoutes),
 
                   // Drawer overlay
                   if (_drawerOpen)
@@ -281,7 +283,7 @@ class _ShellScreenState extends State<ShellScreen> {
           }),
         );
       case AppTab.routes:
-        if (!_isPaidMember) return const _UpgradeScreen();
+        if (!_canAccessRoutes) return const _UpgradeScreen();
         return RouteScreen(
           vehicle: _activeVehicle!,
           onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -475,12 +477,13 @@ class _Avatar extends StatelessWidget {
 // ── BottomNav ─────────────────────────────────────────────────────────────────
 
 class _BottomNav extends StatelessWidget {
-  const _BottomNav({required this.activeTab, required this.onTabChanged, required this.isElectric, required this.isPaidMember});
+  const _BottomNav({required this.activeTab, required this.onTabChanged, required this.isElectric, required this.isPaidMember, required this.canAccessRoutes});
 
   final int activeTab;
   final ValueChanged<int> onTabChanged;
   final bool isElectric;
   final bool isPaidMember;
+  final bool canAccessRoutes;
 
   List<_NavItem> get _items => [
     const _NavItem('Inicio',   Icons.home_rounded,          Icons.home_outlined),
@@ -502,7 +505,7 @@ class _BottomNav extends StatelessWidget {
       child: Row(
         children: List.generate(_items.length, (i) {
           final active = i == activeTab;
-          final locked = i == AppTab.routes && !isPaidMember;
+          final locked = i == AppTab.routes && !canAccessRoutes;
           final iconColor = locked
               ? AppColors.textTertiary.withValues(alpha: 0.4)
               : active ? AppColors.accent : AppColors.textTertiary;
@@ -773,10 +776,11 @@ class _VehicleDrawer extends StatelessWidget {
 // ── FAB ───────────────────────────────────────────────────────────────────────
 
 class _FabButton extends StatefulWidget {
-  const _FabButton({required this.tab, required this.onPressed, required this.isElectric});
+  const _FabButton({required this.tab, required this.onPressed, required this.isElectric, required this.canAccessRoutes});
   final int tab;
   final VoidCallback onPressed;
   final bool isElectric;
+  final bool canAccessRoutes;
 
   @override
   State<_FabButton> createState() => _FabButtonState();
@@ -798,6 +802,7 @@ class _FabButtonState extends State<_FabButton> {
   @override
   Widget build(BuildContext context) {
     if (widget.tab == AppTab.home) return const SizedBox.shrink();
+    if (widget.tab == AppTab.routes && !widget.canAccessRoutes) return const SizedBox.shrink();
     final bottom = MediaQuery.of(context).padding.bottom + 72;
 
     return Positioned(

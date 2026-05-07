@@ -170,16 +170,28 @@ class RouteService {
     required List<RoutePoint> points,
     required double totalDistance,
     required double averageSpeed,
+    required double currentMileage,
+    required int routeNumber,
     String? notes,
   }) async {
-    await _db.from('routes').insert({
-      'vehicle_id': vehicleId,
-      'start_time': startTime.toUtc().toIso8601String(),
-      'end_time': endTime.toUtc().toIso8601String(),
-      'points': points.map((p) => p.toJson()).toList(),
-      'total_distance': totalDistance,
-      'average_speed': averageSpeed,
-      'notes': notes ?? '',
-    });
+    final newMileage = currentMileage + totalDistance;
+    await Future.wait([
+      _db.from('routes').insert({
+        'vehicle_id': vehicleId,
+        'start_time': startTime.toUtc().toIso8601String(),
+        'end_time': endTime.toUtc().toIso8601String(),
+        'points': points.map((p) => p.toJson()).toList(),
+        'total_distance': totalDistance,
+        'average_speed': averageSpeed,
+        'notes': notes ?? '',
+      }),
+      _db.from('mileage_logs').insert({
+        'vehicle_id': vehicleId,
+        'mileage': newMileage,
+        'date': endTime.toUtc().toIso8601String(),
+        'notes': 'Ruta #$routeNumber — ${totalDistance.toStringAsFixed(2)} km recorridos',
+      }),
+      _db.from('vehicles').update({'current_mileage': newMileage}).eq('id', vehicleId),
+    ]);
   }
 }

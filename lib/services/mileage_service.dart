@@ -41,11 +41,12 @@ class MileageService {
     required String vehicleId,
     required double mileage,
     String? notes,
+    DateTime? date,
   }) async {
     await _db.from('mileage_logs').insert({
       'vehicle_id': vehicleId,
       'mileage': mileage,
-      'date': DateTime.now().toIso8601String(),
+      'date': (date ?? DateTime.now()).toIso8601String(),
       'notes': notes,
     });
     await _db

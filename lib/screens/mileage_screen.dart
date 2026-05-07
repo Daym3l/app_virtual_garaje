@@ -368,6 +368,7 @@ class _MileageForm extends StatefulWidget {
 class _MileageFormState extends State<_MileageForm> {
   final _kmCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
+  DateTime _selectedDate = DateTime.now();
   bool _saving = false;
   String? _error;
 
@@ -376,6 +377,29 @@ class _MileageFormState extends State<_MileageForm> {
     _kmCtrl.dispose();
     _notesCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(now.year - 5),
+      lastDate: now,
+      builder: (ctx, child) => Theme(
+        data: Theme.of(ctx).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: AppColors.accent,
+            onPrimary: AppColors.background,
+            surface: AppColors.card,
+            onSurface: AppColors.textPrimary,
+          ),
+          dialogTheme: const DialogThemeData(backgroundColor: AppColors.surface),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) setState(() => _selectedDate = picked);
   }
 
   Future<void> _save() async {
@@ -394,6 +418,7 @@ class _MileageFormState extends State<_MileageForm> {
         vehicleId: widget.vehicle.id,
         mileage: km,
         notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+        date: _selectedDate,
       );
       widget.onSaved();
     } catch (e) {
@@ -433,6 +458,8 @@ class _MileageFormState extends State<_MileageForm> {
             inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d,.]'))],
           ),
           const SizedBox(height: 12),
+          _DateField(date: _selectedDate, onTap: _pickDate),
+          const SizedBox(height: 12),
           _FormField(
             label: 'NOTAS (OPCIONAL)',
             controller: _notesCtrl,
@@ -451,6 +478,43 @@ class _MileageFormState extends State<_MileageForm> {
 }
 
 // ── Shared form widgets ───────────────────────────────────────────────────────
+
+class _DateField extends StatelessWidget {
+  const _DateField({required this.date, required this.onTap});
+  final DateTime date;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('FECHA', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+        const SizedBox(height: 6),
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.card,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.borderSubtle),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_today_outlined, size: 16, color: AppColors.textTertiary),
+                const SizedBox(width: 10),
+                Text(label, style: GoogleFonts.inter(fontSize: 14, color: AppColors.textPrimary)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _FormField extends StatelessWidget {
   const _FormField({

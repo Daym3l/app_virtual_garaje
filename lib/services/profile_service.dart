@@ -10,7 +10,7 @@ class ProfileService {
 
     final data = await _db
         .from('user_profiles')
-        .select('id, membership, membership_status, membership_expires_at')
+        .select('id, membership, membership_status, membership_expires_at, role')
         .eq('id', userId)
         .maybeSingle();
 

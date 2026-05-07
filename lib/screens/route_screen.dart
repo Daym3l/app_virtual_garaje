@@ -61,7 +61,8 @@ class _RouteScreenState extends State<RouteScreen> {
       return;
     }
     if (!mounted) return;
-    final vehicle = widget.vehicle; // snapshot before async gap
+    final vehicle = widget.vehicle;
+    final routeNumber = _routes.length + 1;
     setState(() => _tracking = true);
     await showModalBottomSheet(
       context: context,
@@ -71,6 +72,7 @@ class _RouteScreenState extends State<RouteScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => _TrackingSheet(
         vehicle: vehicle,
+        routeNumber: routeNumber,
         onFinished: () {
           Navigator.pop(context);
           setState(() => _tracking = false);
@@ -285,8 +287,9 @@ class _RouteCard extends StatelessWidget {
 // ── Tracking sheet ────────────────────────────────────────────────────────────
 
 class _TrackingSheet extends StatefulWidget {
-  const _TrackingSheet({required this.vehicle, required this.onFinished});
+  const _TrackingSheet({required this.vehicle, required this.routeNumber, required this.onFinished});
   final Vehicle vehicle;
+  final int routeNumber;
   final VoidCallback onFinished;
 
   @override
@@ -349,6 +352,8 @@ class _TrackingSheetState extends State<_TrackingSheet> {
         points: _points,
         totalDistance: _distanceKm,
         averageSpeed: avgSpeed,
+        currentMileage: widget.vehicle.km,
+        routeNumber: widget.routeNumber,
       );
     } catch (e) {
       if (mounted) {
