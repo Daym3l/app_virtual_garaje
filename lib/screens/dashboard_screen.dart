@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/dashboard_service.dart';
@@ -83,6 +84,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _StatsGrid(vehicle: widget.vehicle, data: _data!),
                   const SizedBox(height: 16),
                   _QuickActions(vehicle: widget.vehicle, onSwitchTab: widget.onSwitchTab, isPaidMember: widget.isPaidMember),
+                  const SizedBox(height: 16),
+                  const _WebBanner(),
                 ],
               ]),
             ),
@@ -817,6 +820,163 @@ class _ErrorBanner extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Web banner ────────────────────────────────────────────────────────────────
+
+class _WebBanner extends StatelessWidget {
+  const _WebBanner();
+
+  static const _url = 'https://mi-garaje-virtual.vercel.app';
+
+  Future<void> _open() async {
+    final uri = Uri.parse(_url);
+    if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.accent.withValues(alpha: 0.20)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.language_rounded, size: 17, color: AppColors.accent),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'MI GARAJE VIRTUAL — WEB',
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.accent,
+                  letterSpacing: 1.0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Administra tu flota completa desde el portal web',
+            style: GoogleFonts.inter(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Agrega vehículos, cambia tu plan de membresía y más desde cualquier navegador.',
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: AppColors.textTertiary,
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _WebChip(
+                icon: Icons.directions_car_outlined,
+                label: '+ Vehículo',
+                onTap: _open,
+              ),
+              const SizedBox(width: 8),
+              _WebChip(
+                icon: Icons.star_outline_rounded,
+                label: 'Membresía',
+                onTap: _open,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          GestureDetector(
+            onTap: _open,
+            child: Row(
+              children: [
+                Text(
+                  'mi-garaje-virtual.vercel.app',
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 10,
+                    color: AppColors.accent.withValues(alpha: 0.7),
+                    letterSpacing: 0.4,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.arrow_forward_rounded, size: 12, color: AppColors.accent.withValues(alpha: 0.7)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WebChip extends StatefulWidget {
+  const _WebChip({required this.icon, required this.label, required this.onTap});
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  State<_WebChip> createState() => _WebChipState();
+}
+
+class _WebChipState extends State<_WebChip> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 100),
+        transform: Matrix4.identity()..scale(_pressed ? 0.95 : 1.0),
+        transformAlignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: _pressed
+              ? AppColors.accent.withValues(alpha: 0.25)
+              : AppColors.accent.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: AppColors.accent.withValues(alpha: 0.30)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(widget.icon, size: 14, color: AppColors.accent),
+            const SizedBox(width: 6),
+            Text(
+              widget.label,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.accent,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
