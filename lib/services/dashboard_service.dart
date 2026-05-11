@@ -134,7 +134,8 @@ class DashboardService {
           .whereType<double>()
           .toList();
       if (stored.isNotEmpty) {
-        avgConsumption = stored.reduce((a, b) => a + b) / stored.length;
+        final avgL100 = stored.reduce((a, b) => a + b) / stored.length;
+        if (avgL100 > 0) avgConsumption = 100 / avgL100;
       } else {
         final logs = consumptionLogs
             .map((r) => (
@@ -146,8 +147,8 @@ class DashboardService {
         final samples = <double>[];
         for (int i = 0; i < logs.length - 1; i++) {
           final kmDelta = logs[i].mileage - logs[i + 1].mileage;
-          if (kmDelta > 0) {
-            samples.add(logs[i].liters / kmDelta * 100);
+          if (kmDelta > 0 && logs[i].liters > 0) {
+            samples.add(kmDelta / logs[i].liters);
           }
         }
         if (samples.isNotEmpty) {

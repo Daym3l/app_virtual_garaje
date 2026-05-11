@@ -173,7 +173,7 @@ class _HeroCard extends StatelessWidget {
                   value: data?.avgConsumption != null
                       ? data!.avgConsumption!.toStringAsFixed(1)
                       : '—',
-                  unit: vehicle.isElectric ? 'kWh/100km' : 'L/100km',
+                  unit: vehicle.isElectric ? 'kWh/100km' : 'km/L',
                 ),
               ),
             ],
