@@ -333,6 +333,9 @@ class _RecordCard extends StatelessWidget {
           if (record.cost > 0) _DetailRow('Costo', '\$${record.cost.toStringAsFixed(2)}'),
           if (record.nextMileage != null) _DetailRow('Próx. km', '${record.nextMileage!.toStringAsFixed(0)} km'),
           if (record.nextDate != null) _DetailRow('Próx. fecha', _dateStr(record.nextDate!)),
+          if (record.performedBy != null && record.performedBy!.isNotEmpty) _DetailRow('Taller', record.performedBy!),
+          if (record.parts != null && record.parts!.isNotEmpty) _DetailRow('Piezas', record.parts!),
+          if (record.warrantyUntil != null) _DetailRow('Garantía hasta', _dateStr(record.warrantyUntil!)),
           _DetailRow('Estado', record.isCompleted ? 'Completado' : 'Pendiente'),
         ],
       ),
@@ -442,20 +445,37 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
   String _type = kMaintenanceTypes.first;
   String _category = kServiceCategories.first; // ignore: prefer_final_fields
   DateTime _date = DateTime.now();
-  DateTime? _nextDate;
   final _descCtrl = TextEditingController();
   final _kmCtrl = TextEditingController();
   final _costCtrl = TextEditingController();
-  final _nextKmCtrl = TextEditingController();
+  final _intervalKmCtrl = TextEditingController();
+  final _intervalDaysCtrl = TextEditingController();
+  final _performedByCtrl = TextEditingController();
+  final _partsCtrl = TextEditingController();
+  DateTime? _warrantyDate;
+  bool _provenanceOpen = false;
   bool _isCompleted = true;
   bool _isUrgent = false;
   bool _saving = false;
   String? _error;
 
   @override
+  void initState() {
+    super.initState();
+    _applyIntervalDefaults(_type);
+  }
+
+  void _applyIntervalDefaults(String type) {
+    final d = defaultInterval(type);
+    _intervalKmCtrl.text = d.km != null ? d.km!.toStringAsFixed(0) : '';
+    _intervalDaysCtrl.text = d.days != null ? d.days.toString() : '';
+  }
+
+  @override
   void dispose() {
-    _descCtrl.dispose(); _kmCtrl.dispose();
-    _costCtrl.dispose(); _nextKmCtrl.dispose();
+    _descCtrl.dispose(); _kmCtrl.dispose(); _costCtrl.dispose();
+    _intervalKmCtrl.dispose(); _intervalDaysCtrl.dispose();
+    _performedByCtrl.dispose(); _partsCtrl.dispose();
     super.dispose();
   }
 
@@ -475,12 +495,12 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
     if (picked != null) setState(() => _date = picked);
   }
 
-  Future<void> _pickNextDate() async {
+  Future<void> _pickWarrantyDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: DateTime.now().add(const Duration(days: 90)),
+      initialDate: _warrantyDate ?? DateTime.now().add(const Duration(days: 365)),
       firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 10)),
       builder: (ctx, child) => Theme(
         data: ThemeData.dark().copyWith(
           colorScheme: const ColorScheme.dark(primary: AppColors.accent, surface: AppColors.card),
@@ -488,13 +508,20 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
         child: child!,
       ),
     );
-    if (picked != null) setState(() => _nextDate = picked);
+    if (picked != null) setState(() => _warrantyDate = picked);
   }
 
   Future<void> _save() async {
     final km = double.tryParse(_kmCtrl.text.replaceAll(',', '.')) ?? widget.vehicle.km;
     final cost = double.tryParse(_costCtrl.text.replaceAll(',', '.')) ?? 0;
-    final nextKm = _nextKmCtrl.text.isNotEmpty ? double.tryParse(_nextKmCtrl.text.replaceAll(',', '.')) : null;
+    final intervalKm = _intervalKmCtrl.text.trim().isNotEmpty
+        ? double.tryParse(_intervalKmCtrl.text.replaceAll(',', '.'))
+        : null;
+    final intervalDays = _intervalDaysCtrl.text.trim().isNotEmpty
+        ? int.tryParse(_intervalDaysCtrl.text.trim())
+        : null;
+    final performedBy = _performedByCtrl.text.trim();
+    final parts = _partsCtrl.text.trim();
     setState(() { _saving = true; _error = null; });
     try {
       await MaintenanceService.addRecord(
@@ -507,8 +534,11 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
         cost: cost,
         isCompleted: _isCompleted,
         isUrgent: _isUrgent,
-        nextMileage: nextKm,
-        nextDate: _nextDate,
+        intervalKm: intervalKm,
+        intervalDays: intervalDays,
+        performedBy: performedBy.isEmpty ? null : performedBy,
+        parts: parts.isEmpty ? null : parts,
+        warrantyUntil: _warrantyDate,
       );
       widget.onSaved();
     } catch (e) {
@@ -597,7 +627,7 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
                   dropdownColor: AppColors.card,
                   style: GoogleFonts.inter(fontSize: 14, color: AppColors.textPrimary),
                   iconEnabledColor: AppColors.textTertiary,
-                  onChanged: (v) { if (v != null) setState(() => _type = v); },
+                  onChanged: (v) { if (v != null) setState(() { _type = v; _applyIntervalDefaults(v); }); },
                   items: kMaintenanceTypes.map((t) => DropdownMenuItem(
                     value: t,
                     child: Text(kMaintenanceTypeLabels[t] ?? t),
@@ -643,43 +673,33 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
             ),
             const SizedBox(height: 12),
 
-            // Próximo servicio en KM
-            _FormField(label: 'PRÓXIMO SERVICIO EN (KM, OPCIONAL)', controller: _nextKmCtrl, hint: '55000', keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly]),
-            const SizedBox(height: 12),
-
-            // Próxima fecha de servicio
-            Text('PRÓXIMA FECHA DE SERVICIO (OPCIONAL)', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+            // ── Repetición / intervalos ──
+            Row(
+              children: [
+                Text('REPETICIÓN', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+                const SizedBox(width: 8),
+                const Icon(Icons.info_outline, size: 12, color: AppColors.textTertiary),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'El próximo servicio se calcula al completar',
+                    style: GoogleFonts.inter(fontSize: 10, color: AppColors.textTertiary),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: _FormField(label: 'CADA CUÁNTOS KM', controller: _intervalKmCtrl, hint: '5000', keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly])),
+                const SizedBox(width: 12),
+                Expanded(child: _FormField(label: 'CADA CUÁNTOS DÍAS', controller: _intervalDaysCtrl, hint: '180', keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly])),
+              ],
+            ),
             const SizedBox(height: 6),
-            GestureDetector(
-              onTap: _pickNextDate,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(
-                  color: AppColors.card,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: _nextDate != null ? AppColors.accent.withValues(alpha: 0.4) : AppColors.borderSubtle),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.calendar_today_outlined, size: 16, color: _nextDate != null ? AppColors.accent : AppColors.textTertiary),
-                    const SizedBox(width: 10),
-                    Text(
-                      _nextDate != null
-                          ? '${_nextDate!.day.toString().padLeft(2, '0')}/${_nextDate!.month.toString().padLeft(2, '0')}/${_nextDate!.year}'
-                          : 'dd/mm/aaaa',
-                      style: GoogleFonts.inter(fontSize: 14, color: _nextDate != null ? AppColors.textPrimary : AppColors.textTertiary),
-                    ),
-                    if (_nextDate != null) ...[
-                      const Spacer(),
-                      GestureDetector(
-                        onTap: () => setState(() => _nextDate = null),
-                        child: const Icon(Icons.close, size: 16, color: AppColors.textTertiary),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+            Text(
+              'Valores sugeridos según el tipo. Ajusta si tu vehículo requiere intervalos distintos.',
+              style: GoogleFonts.inter(fontSize: 10, color: AppColors.textTertiary),
             ),
             const SizedBox(height: 20),
 
@@ -707,6 +727,77 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
                 ],
               ),
             ),
+
+            const SizedBox(height: 20),
+
+            // ── Taller y piezas (colapsable) ──
+            GestureDetector(
+              onTap: () => setState(() => _provenanceOpen = !_provenanceOpen),
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                decoration: BoxDecoration(color: AppColors.card, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppColors.borderSubtle)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('TALLER Y PIEZAS', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+                          const SizedBox(height: 2),
+                          Text('Quién lo hizo, qué piezas, garantía', style: GoogleFonts.inter(fontSize: 10, color: AppColors.textTertiary)),
+                        ],
+                      ),
+                    ),
+                    AnimatedRotation(
+                      turns: _provenanceOpen ? 0.25 : 0,
+                      duration: const Duration(milliseconds: 150),
+                      child: const Icon(Icons.chevron_right, size: 18, color: AppColors.textTertiary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_provenanceOpen) ...[
+              const SizedBox(height: 12),
+              _FormField(label: 'TALLER / MECÁNICO', controller: _performedByCtrl, hint: 'Taller Central, Juan García...'),
+              const SizedBox(height: 12),
+              _FormField(label: 'PIEZAS USADAS', controller: _partsCtrl, hint: 'Filtro aceite, aceite 5W40 4L...', maxLines: 2),
+              const SizedBox(height: 12),
+              Text('GARANTÍA HASTA', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+              const SizedBox(height: 6),
+              GestureDetector(
+                onTap: _pickWarrantyDate,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _warrantyDate != null ? AppColors.accent.withValues(alpha: 0.4) : AppColors.borderSubtle),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.calendar_today_outlined, size: 16, color: _warrantyDate != null ? AppColors.accent : AppColors.textTertiary),
+                      const SizedBox(width: 10),
+                      Text(
+                        _warrantyDate != null
+                            ? '${_warrantyDate!.day.toString().padLeft(2, '0')}/${_warrantyDate!.month.toString().padLeft(2, '0')}/${_warrantyDate!.year}'
+                            : 'dd/mm/aaaa',
+                        style: GoogleFonts.inter(fontSize: 14, color: _warrantyDate != null ? AppColors.textPrimary : AppColors.textTertiary),
+                      ),
+                      if (_warrantyDate != null) ...[
+                        const Spacer(),
+                        GestureDetector(
+                          onTap: () => setState(() => _warrantyDate = null),
+                          child: const Icon(Icons.close, size: 16, color: AppColors.textTertiary),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
 
             if (_error != null) ...[const SizedBox(height: 10), Text(_error!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.danger))],
             const SizedBox(height: 20),
