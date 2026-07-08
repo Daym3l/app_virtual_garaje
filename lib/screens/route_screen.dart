@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/route_service.dart';
+import '../services/pending_routes_store.dart';
 
 class RouteScreen extends StatefulWidget {
   const RouteScreen({super.key, required this.vehicle, required this.onRegisterFab});
@@ -21,6 +22,8 @@ class _RouteScreenState extends State<RouteScreen> {
   List<RouteRecord> _routes = [];
   bool _loading = true;
   bool _tracking = false;
+  bool _syncing = false;
+  int _pendingCount = 0;
   String? _error;
 
   @override
@@ -41,11 +44,32 @@ class _RouteScreenState extends State<RouteScreen> {
 
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
+    try { await RouteService.syncPending(); } catch (_) {}
     try {
       final routes = await RouteService.fetchRoutes(widget.vehicle.id);
-      if (mounted) setState(() { _routes = routes; _loading = false; });
+      final pending = await PendingRoutesStore.countForVehicle(widget.vehicle.id);
+      if (mounted) setState(() { _routes = routes; _pendingCount = pending; _loading = false; });
     } catch (e) {
-      if (mounted) setState(() { _loading = false; _error = e.toString(); });
+      final pending = await PendingRoutesStore.countForVehicle(widget.vehicle.id);
+      if (mounted) setState(() { _loading = false; _error = e.toString(); _pendingCount = pending; });
+    }
+  }
+
+  Future<void> _retrySync() async {
+    if (_syncing) return;
+    setState(() => _syncing = true);
+    final synced = await RouteService.syncPending();
+    if (!mounted) return;
+    setState(() => _syncing = false);
+    if (synced > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$synced ruta(s) sincronizada(s)'), backgroundColor: AppColors.success),
+      );
+      _load();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Aún no se pudo sincronizar. Revisa tu conexión.'), backgroundColor: AppColors.warning),
+      );
     }
   }
 
@@ -93,6 +117,10 @@ class _RouteScreenState extends State<RouteScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverToBoxAdapter(child: _Header(routes: _routes)),
+          if (_pendingCount > 0)
+            SliverToBoxAdapter(
+              child: _PendingBanner(count: _pendingCount, syncing: _syncing, onRetry: _retrySync),
+            ),
           if (_loading)
             const SliverFillRemaining(
               child: Center(child: CircularProgressIndicator(color: AppColors.accent, strokeWidth: 2)),
@@ -188,6 +216,69 @@ class _Header extends StatelessWidget {
   String _fmtMin(int min) {
     if (min < 60) return '${min}m';
     return '${min ~/ 60}h ${min % 60}m';
+  }
+}
+
+// ── Banner de rutas pendientes de sincronizar ──────────────────────────────────
+
+class _PendingBanner extends StatelessWidget {
+  const _PendingBanner({required this.count, required this.syncing, required this.onRetry});
+  final int count;
+  final bool syncing;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_outlined, size: 18, color: AppColors.warning),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  count == 1 ? '1 ruta sin sincronizar' : '$count rutas sin sincronizar',
+                  style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                ),
+                Text(
+                  'Guardadas localmente. Se subirán cuando haya red.',
+                  style: GoogleFonts.inter(fontSize: 11, color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          syncing
+              ? const SizedBox(
+                  width: 18, height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.warning),
+                )
+              : GestureDetector(
+                  onTap: onRetry,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Reintentar',
+                      style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.warning),
+                    ),
+                  ),
+                ),
+        ],
+      ),
+    );
   }
 }
 
@@ -344,23 +435,24 @@ class _TrackingSheetState extends State<_TrackingSheet> {
         ? (_distanceKm / duration.inSeconds * 3600)
         : 0.0;
 
-    try {
-      await RouteService.saveRoute(
-        vehicleId: widget.vehicle.id,
-        startTime: _startTime!,
-        endTime: endTime,
-        points: _points,
-        totalDistance: _distanceKm,
-        averageSpeed: avgSpeed,
-        currentMileage: widget.vehicle.km,
-        routeNumber: widget.routeNumber,
+    final saved = await RouteService.saveOrQueue(
+      vehicleId: widget.vehicle.id,
+      startTime: _startTime!,
+      endTime: endTime,
+      points: _points,
+      totalDistance: _distanceKm,
+      averageSpeed: avgSpeed,
+      currentMileage: widget.vehicle.km,
+      routeNumber: widget.routeNumber,
+    );
+    if (mounted && !saved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sin conexión: la ruta se guardó localmente y se sincronizará cuando haya red'),
+          backgroundColor: AppColors.warning,
+          duration: Duration(milliseconds: 3500),
+        ),
       );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al guardar: $e'), backgroundColor: AppColors.danger),
-        );
-      }
     }
     widget.onFinished();
   }

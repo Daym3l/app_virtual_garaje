@@ -148,6 +148,9 @@ Tema oscuro profundo, acento azul eléctrico. **Pixel-perfect respecto a los pro
 - `vehicle_id` uuid, `date` timestamptz, `type`, `description`, `service_category` text
 - `mileage`, `cost` numeric, `is_completed`, `is_urgent` bool
 - `next_mileage` numeric (nullable), `next_date` timestamptz (nullable)
+- `interval_km` numeric (nullable), `interval_days` int (nullable) — repetición; sugeridos por tipo
+- `performed_by` text (nullable), `parts` text (nullable), `warranty_until` date (nullable)
+- Trigger BD `maintenance_completed_trigger` (BEFORE UPDATE): al pasar `is_completed` false→true calcula `next_mileage = mileage + interval_km` y `next_date = date + interval_days`. En INSERT no se dispara → la app calcula `next_*` en cliente cuando se crea ya completado.
 
 **routes**
 - `vehicle_id` uuid, `start_time`, `end_time` timestamptz

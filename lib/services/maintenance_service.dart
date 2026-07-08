@@ -14,6 +14,11 @@ class MaintenanceRecord {
     required this.isUrgent,
     this.nextMileage,
     this.nextDate,
+    this.intervalKm,
+    this.intervalDays,
+    this.performedBy,
+    this.parts,
+    this.warrantyUntil,
   });
 
   final String id;
@@ -28,6 +33,11 @@ class MaintenanceRecord {
   final bool isUrgent;
   final double? nextMileage;
   final DateTime? nextDate;
+  final double? intervalKm;
+  final int? intervalDays;
+  final String? performedBy;
+  final String? parts;
+  final DateTime? warrantyUntil;
 
   factory MaintenanceRecord.fromJson(Map<String, dynamic> j) =>
       MaintenanceRecord(
@@ -45,6 +55,13 @@ class MaintenanceRecord {
         nextDate: j['next_date'] != null
             ? DateTime.parse(j['next_date'] as String)
             : null,
+        intervalKm: (j['interval_km'] as num?)?.toDouble(),
+        intervalDays: (j['interval_days'] as num?)?.toInt(),
+        performedBy: j['performed_by'] as String?,
+        parts: j['parts'] as String?,
+        warrantyUntil: j['warranty_until'] != null
+            ? DateTime.parse(j['warranty_until'] as String)
+            : null,
       );
 }
 
@@ -58,23 +75,69 @@ const kServiceCategoryLabels = {
 
 const kMaintenanceTypes = [
   'oilChange',
-  'brakes',
-  'engine',
   'transmission',
+  'suspension',
+  'brakes',
+  'tires',
+  'alignment',
+  'filters',
+  'battery',
+  'cooling',
   'electrical',
+  'engine',
+  'exhaust',
   'steering',
+  'belts',
+  'diagnostics',
   'other',
 ];
 
 const kMaintenanceTypeLabels = {
   'oilChange': 'Cambio de aceite',
-  'brakes': 'Frenos',
-  'engine': 'Motor',
   'transmission': 'Transmisión',
-  'electrical': 'Sistema eléctrico',
+  'suspension': 'Suspensión',
+  'brakes': 'Frenos',
+  'tires': 'Neumáticos',
+  'alignment': 'Alineación',
+  'filters': 'Filtros',
+  'battery': 'Batería',
+  'cooling': 'Refrigeración',
+  'electrical': 'Eléctrico',
+  'engine': 'Motor',
+  'exhaust': 'Escape',
   'steering': 'Dirección',
+  'belts': 'Correas',
+  'diagnostics': 'Diagnóstico',
   'other': 'Otro',
 };
+
+class MaintenanceInterval {
+  const MaintenanceInterval({this.km, this.days});
+  final double? km;
+  final int? days;
+}
+
+const kMaintenanceIntervals = <String, MaintenanceInterval>{
+  'oilChange': MaintenanceInterval(km: 5000, days: 180),
+  'filters': MaintenanceInterval(km: 15000, days: 365),
+  'tires': MaintenanceInterval(km: 10000, days: 180),
+  'brakes': MaintenanceInterval(km: 20000, days: 365),
+  'alignment': MaintenanceInterval(km: 10000, days: 180),
+  'engine': MaintenanceInterval(km: 30000, days: 730),
+  'transmission': MaintenanceInterval(km: 40000, days: 730),
+  'cooling': MaintenanceInterval(km: 40000, days: 730),
+  'belts': MaintenanceInterval(km: 60000, days: 1825),
+  'battery': MaintenanceInterval(days: 1095),
+  'suspension': MaintenanceInterval(km: 20000, days: 365),
+  'steering': MaintenanceInterval(km: 20000, days: 365),
+  'exhaust': MaintenanceInterval(km: 30000, days: 730),
+  'electrical': MaintenanceInterval(days: 365),
+  'diagnostics': MaintenanceInterval(days: 365),
+  'other': MaintenanceInterval(),
+};
+
+MaintenanceInterval defaultInterval(String type) =>
+    kMaintenanceIntervals[type] ?? const MaintenanceInterval();
 
 class MaintenanceService {
   static SupabaseClient get _db => Supabase.instance.client;
@@ -99,9 +162,21 @@ class MaintenanceService {
     required double cost,
     bool isCompleted = true,
     bool isUrgent = false,
-    double? nextMileage,
-    DateTime? nextDate,
+    double? intervalKm,
+    int? intervalDays,
+    String? performedBy,
+    String? parts,
+    DateTime? warrantyUntil,
   }) async {
+    // next_* lo calcula el trigger de la BD al pasar un registro pendiente a
+    // completado. En un INSERT el trigger no se dispara, así que para registros
+    // creados ya completados se calcula aquí a partir de los intervalos.
+    double? nextMileage;
+    DateTime? nextDate;
+    if (isCompleted) {
+      if (intervalKm != null) nextMileage = mileage + intervalKm;
+      if (intervalDays != null) nextDate = date.add(Duration(days: intervalDays));
+    }
     await _db.from('maintenances').insert({
       'vehicle_id': vehicleId,
       'type': type,
@@ -112,8 +187,13 @@ class MaintenanceService {
       'cost': cost,
       'is_completed': isCompleted,
       'is_urgent': isUrgent,
+      'interval_km': intervalKm,
+      'interval_days': intervalDays,
       'next_mileage': nextMileage,
       'next_date': nextDate?.toIso8601String().split('T').first,
+      'performed_by': performedBy,
+      'parts': parts,
+      'warranty_until': warrantyUntil?.toIso8601String().split('T').first,
     });
   }
 

@@ -80,6 +80,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _HeroCard(vehicle: widget.vehicle, data: _data!),
                   const SizedBox(height: 10),
                   _AlertsSection(alerts: _data!.alerts),
+                  if (_data!.warranties.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    _WarrantiesSection(warranties: _data!.warranties),
+                  ],
                   const SizedBox(height: 10),
                   _StatsGrid(vehicle: widget.vehicle, data: _data!),
                   const SizedBox(height: 16),
@@ -557,6 +561,118 @@ class _AlertRow extends StatelessWidget {
             ),
           ),
           // Badge
+          Container(
+            margin: const EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              _badge,
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                color: color,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Warranties ─────────────────────────────────────────────────────────────────
+
+class _WarrantiesSection extends StatelessWidget {
+  const _WarrantiesSection({required this.warranties});
+  final List<WarrantyAlert> warranties;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 2, bottom: 8),
+          child: Text(
+            'GARANTÍAS ACTIVAS',
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textTertiary,
+              letterSpacing: 1.2,
+            ),
+          ),
+        ),
+        ...warranties.map((w) => _WarrantyRow(warranty: w)),
+      ],
+    );
+  }
+}
+
+class _WarrantyRow extends StatelessWidget {
+  const _WarrantyRow({required this.warranty});
+  final WarrantyAlert warranty;
+
+  Color get _color => warranty.level == AlertLevel.warning
+      ? AppColors.warning
+      : AppColors.success;
+
+  String get _badge =>
+      warranty.level == AlertLevel.warning ? 'POR VENCER' : 'VIGENTE';
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 48,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(10),
+                bottomLeft: Radius.circular(10),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Icon(Icons.verified_user_outlined, size: 16, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  warranty.type,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                Text(
+                  warranty.subtitle,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    color: AppColors.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
           Container(
             margin: const EdgeInsets.only(right: 12),
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),

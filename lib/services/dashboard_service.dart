@@ -16,6 +16,20 @@ class MaintenanceAlert {
   final double sortKey;
 }
 
+class WarrantyAlert {
+  const WarrantyAlert({
+    required this.type,
+    required this.level,
+    required this.subtitle,
+    required this.sortKey,
+  });
+
+  final String type;
+  final AlertLevel level;
+  final String subtitle;
+  final double sortKey;
+}
+
 class DashboardData {
   const DashboardData({
     required this.lastFuelDate,
@@ -23,6 +37,7 @@ class DashboardData {
     required this.lastFuelCost,
     required this.avgConsumption,
     required this.alerts,
+    required this.warranties,
     required this.kmThisMonth,
   });
 
@@ -31,6 +46,7 @@ class DashboardData {
   final double? lastFuelCost;
   final double? avgConsumption;
   final List<MaintenanceAlert> alerts;
+  final List<WarrantyAlert> warranties;
   final double kmThisMonth;
 
   bool get hasUrgentAlert => alerts.any((a) => a.level == AlertLevel.error);
@@ -52,6 +68,7 @@ class DashboardService {
   }) async {
     final now = DateTime.now();
     final monthStart = DateTime(now.year, now.month, 1).toIso8601String();
+    final today = DateTime(now.year, now.month, now.day).toIso8601String().split('T').first;
 
     final futures = await Future.wait([
       // Last fuel/energy log
@@ -87,6 +104,15 @@ class DashboardService {
           .eq('vehicle_id', vehicleId)
           .eq('is_completed', false),
 
+      // Active warranties (warranty_until >= today)
+      _db
+          .from('maintenances')
+          .select('type, description, warranty_until')
+          .eq('vehicle_id', vehicleId)
+          .not('warranty_until', 'is', null)
+          .gte('warranty_until', today)
+          .order('warranty_until', ascending: true),
+
       // Km this month + baseline
       Future.wait([
         _db
@@ -107,7 +133,8 @@ class DashboardService {
     final lastLog = futures[0];
     final consumptionLogs = futures[1];
     final maintLogs = futures[2];
-    final kmFutures = futures[3] as List<List<dynamic>>;
+    final warrantyLogs = futures[3];
+    final kmFutures = futures[4] as List<List<dynamic>>;
     final mileageLogsThisMonth = kmFutures[0];
     final mileageLogsBaseline = kmFutures[1];
 
@@ -159,6 +186,7 @@ class DashboardService {
 
     // Alerts
     final alerts = _buildAlerts(maintLogs, currentMileage, now);
+    final warranties = _buildWarranties(warrantyLogs, now);
 
     // Km this month
     double kmThisMonth = 0;
@@ -182,9 +210,49 @@ class DashboardService {
       lastFuelCost: lastFuelCost,
       avgConsumption: avgConsumption,
       alerts: alerts,
+      warranties: warranties,
       kmThisMonth: kmThisMonth,
     );
   }
+
+  static List<WarrantyAlert> _buildWarranties(List rows, DateTime now) {
+    final today = DateTime(now.year, now.month, now.day);
+    final alerts = <WarrantyAlert>[];
+
+    for (final raw in rows) {
+      final m = raw as Map<String, dynamic>;
+      final until = DateTime.tryParse(m['warranty_until']?.toString() ?? '');
+      if (until == null) continue;
+      final target = DateTime(until.year, until.month, until.day);
+      final daysLeft = target.difference(today).inDays;
+      if (daysLeft < 0) continue;
+
+      final type = _translateType((m['type'] as String?) ?? '');
+      final level = daysLeft <= 30 ? AlertLevel.warning : AlertLevel.info;
+
+      final String subtitle;
+      if (daysLeft == 0) {
+        subtitle = 'Vence hoy · ${_fmtDate(target)}';
+      } else if (daysLeft == 1) {
+        subtitle = 'Vence mañana · ${_fmtDate(target)}';
+      } else {
+        subtitle = 'Vence en $daysLeft días · ${_fmtDate(target)}';
+      }
+
+      alerts.add(WarrantyAlert(
+        type: type,
+        level: level,
+        subtitle: subtitle,
+        sortKey: daysLeft.toDouble(),
+      ));
+    }
+
+    alerts.sort((a, b) => a.sortKey.compareTo(b.sortKey));
+    return alerts;
+  }
+
+  static String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   static List<MaintenanceAlert> _buildAlerts(
     List maintLogs,

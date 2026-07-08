@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/env.dart';
 import 'services/auth_service.dart';
 import 'services/fcm_service.dart';
+import 'services/route_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/shell_screen.dart';
@@ -52,11 +53,18 @@ class _AuthGateState extends State<_AuthGate> {
   void initState() {
     super.initState();
     _loggedIn = AuthService.currentSession != null;
+    if (_loggedIn!) _syncPendingRoutes();
 
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (!mounted) return;
-      setState(() => _loggedIn = data.session != null);
+      final loggedIn = data.session != null;
+      setState(() => _loggedIn = loggedIn);
+      if (loggedIn) _syncPendingRoutes();
     });
+  }
+
+  void _syncPendingRoutes() {
+    RouteService.syncPending().catchError((_) => 0);
   }
 
   @override
