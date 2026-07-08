@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/mileage_service.dart';
+import '../services/odometer_service.dart';
 
 class MileageScreen extends StatefulWidget {
   const MileageScreen({super.key, required this.vehicle, required this.onRegisterFab});
@@ -408,11 +409,17 @@ class _MileageFormState extends State<_MileageForm> {
       setState(() => _error = 'Ingresa un kilometraje válido');
       return;
     }
-    if (km < widget.vehicle.km) {
-      setState(() => _error = 'El km no puede ser menor al actual (${widget.vehicle.km.toStringAsFixed(0)})');
+    setState(() { _saving = true; _error = null; });
+    final odoError = await OdometerService.validate(
+      vehicleId: widget.vehicle.id,
+      date: _selectedDate,
+      valueKm: km,
+      excludeSource: 'mileage',
+    );
+    if (odoError != null) {
+      if (mounted) setState(() { _saving = false; _error = odoError; });
       return;
     }
-    setState(() { _saving = true; _error = null; });
     try {
       await MileageService.addLog(
         vehicleId: widget.vehicle.id,

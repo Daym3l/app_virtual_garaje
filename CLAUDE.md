@@ -149,7 +149,9 @@ Tema oscuro profundo, acento azul eléctrico. **Pixel-perfect respecto a los pro
 - `mileage`, `cost` numeric, `is_completed`, `is_urgent` bool
 - `next_mileage` numeric (nullable), `next_date` timestamptz (nullable)
 - `interval_km` numeric (nullable), `interval_days` int (nullable) — repetición; sugeridos por tipo
-- `performed_by` text (nullable), `parts` text (nullable), `warranty_until` date (nullable)
+- `performed_by` text (nullable), `parts` text (nullable, legacy), `warranty_until` date (nullable)
+- `items` jsonb (nullable) — `[{type, notes}]`; NULL = fila antigua de tipo único; `items[0].type` = columna `type` (primario)
+- `parts_list` jsonb (nullable) — `[{name, price|null}]`; NULL = sin piezas estructuradas (texto libre en `parts`)
 - Trigger BD `maintenance_completed_trigger` (BEFORE UPDATE): al pasar `is_completed` false→true calcula `next_mileage = mileage + interval_km` y `next_date = date + interval_days`. En INSERT no se dispara → la app calcula `next_*` en cliente cuando se crea ya completado.
 
 **routes**
@@ -167,6 +169,12 @@ Tema oscuro profundo, acento azul eléctrico. **Pixel-perfect respecto a los pro
 **user_settings**
 - `user_id` uuid, `distance_unit`, `fuel_unit`, `theme` text
 - `maintenance_alerts` bool
+
+### RPCs compartidas con la web (ya desplegadas)
+
+- `get_odometer_bounds(p_vehicle_id, p_date, p_exclude_source, p_exclude_id)` — cotas de odómetro alrededor de una fecha (por día calendario) sobre fuel/mileage/maintenance/energy. Usada por `OdometerService.validate` antes de guardar.
+- `get_field_suggestions(p_kind)` — `p_kind ∈ 'station'|'provider'|'location'`; valores ya escritos por el usuario, para autocompletado (`SuggestionsService` + `AutocompleteField`).
+- Consumo: la app calcula full-to-full en cliente (`lib/utils/consumption.dart`, puerto de la web) — segmentos entre tanques llenos acumulando parciales, promedio ponderado.
 
 ## Convenciones de código
 

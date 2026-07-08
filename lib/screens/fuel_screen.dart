@@ -4,6 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/fuel_service.dart';
+import '../services/odometer_service.dart';
+import '../services/suggestions_service.dart';
+import '../widgets/autocomplete_field.dart';
 
 class FuelScreen extends StatefulWidget {
   const FuelScreen({super.key, required this.vehicle, required this.onRegisterFab});
@@ -490,6 +493,16 @@ class _FuelFormState extends State<_FuelForm> {
     if (cost == null || cost < 0) { setState(() => _error = 'Ingresa costo válido'); return; }
     if (km == null || km <= 0) { setState(() => _error = 'Ingresa kilometraje válido'); return; }
     setState(() { _saving = true; _error = null; });
+    final odoError = await OdometerService.validate(
+      vehicleId: widget.vehicle.id,
+      date: _date,
+      valueKm: km,
+      excludeSource: 'fuel',
+    );
+    if (odoError != null) {
+      if (mounted) setState(() { _saving = false; _error = odoError; });
+      return;
+    }
     try {
       await FuelService.addFuelLog(
         vehicleId: widget.vehicle.id,
@@ -500,6 +513,7 @@ class _FuelFormState extends State<_FuelForm> {
         station: _stationCtrl.text.trim(),
         isTankFull: _isTankFull,
       );
+      if (_stationCtrl.text.trim().isNotEmpty) SuggestionsService.invalidate('station');
       widget.onSaved();
     } catch (e) {
       if (mounted) setState(() { _saving = false; _error = 'Error al guardar: $e'; });
@@ -560,7 +574,7 @@ class _FuelFormState extends State<_FuelForm> {
             const SizedBox(height: 12),
             _FormField(label: 'ODÓMETRO (KM)', controller: _kmCtrl, hint: widget.vehicle.km.toStringAsFixed(0), keyboardType: const TextInputType.numberWithOptions(decimal: true), inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d,.]'))]),
             const SizedBox(height: 12),
-            _FormField(label: 'ESTACIÓN (OPCIONAL)', controller: _stationCtrl, hint: 'Ej: Cupet, Shell...'),
+            AutocompleteField(label: 'ESTACIÓN (OPCIONAL)', controller: _stationCtrl, hint: 'Ej: Cupet, Shell...', kind: 'station'),
             const SizedBox(height: 12),
             GestureDetector(
               onTap: () => setState(() => _isTankFull = !_isTankFull),
@@ -665,6 +679,16 @@ class _EnergyFormState extends State<_EnergyForm> {
     final energyValue = energy ?? ((finalLevel - initial) / 100 * (widget.vehicle.batteryCapacity ?? 0));
     if (energyValue <= 0) { setState(() => _error = 'Ingresa la energía añadida'); return; }
     setState(() { _saving = true; _error = null; });
+    final odoError = await OdometerService.validate(
+      vehicleId: widget.vehicle.id,
+      date: _date,
+      valueKm: km,
+      excludeSource: 'energy',
+    );
+    if (odoError != null) {
+      if (mounted) setState(() { _saving = false; _error = odoError; });
+      return;
+    }
     try {
       await FuelService.addEnergyLog(
         vehicleId: widget.vehicle.id,
@@ -675,6 +699,7 @@ class _EnergyFormState extends State<_EnergyForm> {
         energyAdded: energyValue,
         location: _locationCtrl.text.trim(),
       );
+      if (_locationCtrl.text.trim().isNotEmpty) SuggestionsService.invalidate('location');
       widget.onSaved();
     } catch (e) {
       if (mounted) setState(() { _saving = false; _error = 'Error al guardar: $e'; });
@@ -743,7 +768,7 @@ class _EnergyFormState extends State<_EnergyForm> {
               readOnly: (widget.vehicle.batteryCapacity ?? 0) > 0,
             ),
             const SizedBox(height: 12),
-            _FormField(label: 'UBICACIÓN (OPCIONAL)', controller: _locationCtrl, hint: 'Ej: Cargador casa, Mall...'),
+            AutocompleteField(label: 'UBICACIÓN (OPCIONAL)', controller: _locationCtrl, hint: 'Ej: Cargador casa, Mall...', kind: 'location'),
             if (_error != null) ...[const SizedBox(height: 10), Text(_error!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.danger))],
             const SizedBox(height: 20),
             _SaveButton(saving: _saving, label: 'Guardar carga', onTap: _save),

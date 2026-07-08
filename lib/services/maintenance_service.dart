@@ -1,5 +1,67 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+class MaintenanceItem {
+  const MaintenanceItem({required this.type, this.notes = ''});
+  final String type;
+  final String notes;
+
+  Map<String, dynamic> toJson() => {'type': type, 'notes': notes};
+}
+
+class MaintenancePart {
+  const MaintenancePart({required this.name, this.price});
+  final String name;
+  final double? price;
+
+  Map<String, dynamic> toJson() => {'name': name, 'price': price};
+}
+
+/// Normaliza el JSONB `items` (o cualquier entrada no confiable): solo tipos
+/// conocidos, sin duplicados (gana el primero), notas no-string → ''. Vacío o
+/// NULL (filas antiguas) → un item con el tipo de la columna `type`.
+List<MaintenanceItem> normalizeItems(dynamic raw, String fallbackType) {
+  final items = <MaintenanceItem>[];
+  final seen = <String>{};
+  if (raw is List) {
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final type = entry['type'];
+      if (type is! String || !kMaintenanceTypes.contains(type) || seen.contains(type)) continue;
+      final notes = entry['notes'];
+      seen.add(type);
+      items.add(MaintenanceItem(type: type, notes: notes is String ? notes : ''));
+    }
+  }
+  if (items.isEmpty) return [MaintenanceItem(type: fallbackType)];
+  return items;
+}
+
+/// Normaliza el JSONB `parts_list`: solo entradas con `name` no vacío;
+/// `price` numérico finito >= 0 o null. NULL/basura → [].
+List<MaintenancePart> normalizeParts(dynamic raw) {
+  if (raw is! List) return const [];
+  final parts = <MaintenancePart>[];
+  for (final entry in raw) {
+    if (entry is! Map) continue;
+    final name = entry['name'];
+    if (name is! String || name.trim().isEmpty) continue;
+    final price = entry['price'];
+    final validPrice = price is num && price.toDouble().isFinite && price >= 0;
+    parts.add(MaintenancePart(name: name.trim(), price: validPrice ? price.toDouble() : null));
+  }
+  return parts;
+}
+
+/// Etiqueta compacta: "Batería" para un item, "Batería +2" para tres.
+String itemsLabel(List<MaintenanceItem> items) {
+  if (items.isEmpty) return '';
+  final primary = kMaintenanceTypeLabels[items.first.type] ?? items.first.type;
+  return items.length > 1 ? '$primary +${items.length - 1}' : primary;
+}
+
+double partsTotal(List<MaintenancePart> parts) =>
+    parts.fold(0.0, (sum, p) => sum + (p.price ?? 0));
+
 class MaintenanceRecord {
   const MaintenanceRecord({
     required this.id,
@@ -19,6 +81,8 @@ class MaintenanceRecord {
     this.performedBy,
     this.parts,
     this.warrantyUntil,
+    this.items = const [],
+    this.partsList = const [],
   });
 
   final String id;
@@ -38,6 +102,8 @@ class MaintenanceRecord {
   final String? performedBy;
   final String? parts;
   final DateTime? warrantyUntil;
+  final List<MaintenanceItem> items;
+  final List<MaintenancePart> partsList;
 
   factory MaintenanceRecord.fromJson(Map<String, dynamic> j) =>
       MaintenanceRecord(
@@ -62,6 +128,8 @@ class MaintenanceRecord {
         warrantyUntil: j['warranty_until'] != null
             ? DateTime.parse(j['warranty_until'] as String)
             : null,
+        items: normalizeItems(j['items'], j['type'] as String),
+        partsList: normalizeParts(j['parts_list']),
       );
 }
 
@@ -154,7 +222,7 @@ class MaintenanceService {
 
   static Future<void> addRecord({
     required String vehicleId,
-    required String type,
+    required List<MaintenanceItem> items,
     required String description,
     required String serviceCategory,
     required DateTime date,
@@ -165,7 +233,7 @@ class MaintenanceService {
     double? intervalKm,
     int? intervalDays,
     String? performedBy,
-    String? parts,
+    List<MaintenancePart> partsList = const [],
     DateTime? warrantyUntil,
   }) async {
     // next_* lo calcula el trigger de la BD al pasar un registro pendiente a
@@ -179,7 +247,8 @@ class MaintenanceService {
     }
     await _db.from('maintenances').insert({
       'vehicle_id': vehicleId,
-      'type': type,
+      'type': items.first.type,
+      'items': items.map((i) => i.toJson()).toList(),
       'description': description,
       'service_category': serviceCategory,
       'date': date.toIso8601String(),
@@ -192,7 +261,8 @@ class MaintenanceService {
       'next_mileage': nextMileage,
       'next_date': nextDate?.toIso8601String().split('T').first,
       'performed_by': performedBy,
-      'parts': parts,
+      'parts': null,
+      'parts_list': partsList.map((p) => p.toJson()).toList(),
       'warranty_until': warrantyUntil?.toIso8601String().split('T').first,
     });
   }
