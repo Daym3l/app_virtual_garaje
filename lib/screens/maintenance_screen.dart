@@ -4,6 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/maintenance_service.dart';
+import '../services/odometer_service.dart';
+import '../services/suggestions_service.dart';
+import '../widgets/autocomplete_field.dart';
 
 class MaintenanceScreen extends StatefulWidget {
   const MaintenanceScreen({super.key, required this.vehicle, required this.onRegisterFab});
@@ -308,7 +311,7 @@ class _RecordCard extends StatelessWidget {
     return AppColors.accent;
   }
 
-  String get _typeLabel => kMaintenanceTypeLabels[record.type] ?? record.type;
+  String get _typeLabel => itemsLabel(record.items);
 
   String _dateStr(DateTime d) =>
       '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
@@ -327,6 +330,15 @@ class _RecordCard extends StatelessWidget {
         isCompleted: record.isCompleted,
         isUrgent: record.isUrgent,
         rows: [
+          if (record.items.length > 1)
+            ...record.items.map((it) => _DetailRow(
+                  'Trabajo',
+                  it.notes.isNotEmpty
+                      ? '${kMaintenanceTypeLabels[it.type] ?? it.type} — ${it.notes}'
+                      : kMaintenanceTypeLabels[it.type] ?? it.type,
+                ))
+          else if (record.items.isNotEmpty && record.items.first.notes.isNotEmpty)
+            _DetailRow('Nota', record.items.first.notes),
           if (record.description.isNotEmpty) _DetailRow('Descripción', record.description),
           _DetailRow('Categoría', catLabel),
           _DetailRow('Odómetro', '${record.mileage.toStringAsFixed(0)} km'),
@@ -334,7 +346,15 @@ class _RecordCard extends StatelessWidget {
           if (record.nextMileage != null) _DetailRow('Próx. km', '${record.nextMileage!.toStringAsFixed(0)} km'),
           if (record.nextDate != null) _DetailRow('Próx. fecha', _dateStr(record.nextDate!)),
           if (record.performedBy != null && record.performedBy!.isNotEmpty) _DetailRow('Taller', record.performedBy!),
-          if (record.parts != null && record.parts!.isNotEmpty) _DetailRow('Piezas', record.parts!),
+          if (record.partsList.isNotEmpty) ...[
+            ...record.partsList.map((p) => _DetailRow(
+                  'Pieza',
+                  p.price != null ? '${p.name} — \$${p.price!.toStringAsFixed(2)}' : p.name,
+                )),
+            if (partsTotal(record.partsList) > 0)
+              _DetailRow('Total piezas', '\$${partsTotal(record.partsList).toStringAsFixed(2)}'),
+          ] else if (record.parts != null && record.parts!.isNotEmpty)
+            _DetailRow('Piezas', record.parts!),
           if (record.warrantyUntil != null) _DetailRow('Garantía hasta', _dateStr(record.warrantyUntil!)),
           _DetailRow('Estado', record.isCompleted ? 'Completado' : 'Pendiente'),
         ],
@@ -441,8 +461,23 @@ class _MaintenanceForm extends StatefulWidget {
   State<_MaintenanceForm> createState() => _MaintenanceFormState();
 }
 
+class _ItemEntry {
+  _ItemEntry(this.type) : notesCtrl = TextEditingController();
+  final String type;
+  final TextEditingController notesCtrl;
+}
+
+class _PartEntry {
+  _PartEntry()
+      : nameCtrl = TextEditingController(),
+        priceCtrl = TextEditingController();
+  final TextEditingController nameCtrl;
+  final TextEditingController priceCtrl;
+}
+
 class _MaintenanceFormState extends State<_MaintenanceForm> {
-  String _type = kMaintenanceTypes.first;
+  final List<_ItemEntry> _items = [_ItemEntry(kMaintenanceTypes.first)];
+  bool _typesOpen = false;
   String _category = kServiceCategories.first; // ignore: prefer_final_fields
   DateTime _date = DateTime.now();
   final _descCtrl = TextEditingController();
@@ -451,7 +486,7 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
   final _intervalKmCtrl = TextEditingController();
   final _intervalDaysCtrl = TextEditingController();
   final _performedByCtrl = TextEditingController();
-  final _partsCtrl = TextEditingController();
+  final List<_PartEntry> _parts = [];
   DateTime? _warrantyDate;
   bool _provenanceOpen = false;
   bool _isCompleted = true;
@@ -459,10 +494,12 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
   bool _saving = false;
   String? _error;
 
+  String? get _primaryType => _items.isEmpty ? null : _items.first.type;
+
   @override
   void initState() {
     super.initState();
-    _applyIntervalDefaults(_type);
+    _applyIntervalDefaults(_items.first.type);
   }
 
   void _applyIntervalDefaults(String type) {
@@ -471,11 +508,58 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
     _intervalDaysCtrl.text = d.days != null ? d.days.toString() : '';
   }
 
+  // Añade o quita un tipo. Los intervalos solo se re-sugieren cuando cambia el
+  // tipo PRIMARIO (items[0]): añadir un secundario no pisa lo ya ajustado.
+  void _toggleItemType(String type) {
+    final prevPrimary = _primaryType;
+    setState(() {
+      final idx = _items.indexWhere((it) => it.type == type);
+      if (idx >= 0) {
+        _items.removeAt(idx).notesCtrl.dispose();
+      } else {
+        _items.add(_ItemEntry(type));
+      }
+    });
+    final newPrimary = _primaryType;
+    if (newPrimary != null && newPrimary != prevPrimary) {
+      _applyIntervalDefaults(newPrimary);
+    }
+  }
+
+  void _addPart() => setState(() => _parts.add(_PartEntry()));
+
+  void _removePart(int i) {
+    setState(() {
+      final p = _parts.removeAt(i);
+      p.nameCtrl.dispose();
+      p.priceCtrl.dispose();
+    });
+  }
+
+  double get _partsSubtotal => _parts.fold(0.0, (sum, p) {
+        final price = double.tryParse(p.priceCtrl.text.replaceAll(',', '.'));
+        return sum + (price != null && price >= 0 ? price : 0);
+      });
+
+  InputDecoration _partInputDecoration(String hint) => InputDecoration(
+        hintText: hint,
+        hintStyle: GoogleFonts.inter(fontSize: 13, color: AppColors.textTertiary),
+        filled: true,
+        fillColor: AppColors.card,
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.borderSubtle)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.borderSubtle)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.accent)),
+      );
+
   @override
   void dispose() {
     _descCtrl.dispose(); _kmCtrl.dispose(); _costCtrl.dispose();
     _intervalKmCtrl.dispose(); _intervalDaysCtrl.dispose();
-    _performedByCtrl.dispose(); _partsCtrl.dispose();
+    _performedByCtrl.dispose();
+    for (final it in _items) { it.notesCtrl.dispose(); }
+    for (final p in _parts) { p.nameCtrl.dispose(); p.priceCtrl.dispose(); }
     super.dispose();
   }
 
@@ -512,6 +596,10 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
   }
 
   Future<void> _save() async {
+    if (_items.isEmpty) {
+      setState(() => _error = 'Selecciona al menos un tipo de mantenimiento');
+      return;
+    }
     final km = double.tryParse(_kmCtrl.text.replaceAll(',', '.')) ?? widget.vehicle.km;
     final cost = double.tryParse(_costCtrl.text.replaceAll(',', '.')) ?? 0;
     final intervalKm = _intervalKmCtrl.text.trim().isNotEmpty
@@ -521,12 +609,37 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
         ? int.tryParse(_intervalDaysCtrl.text.trim())
         : null;
     final performedBy = _performedByCtrl.text.trim();
-    final parts = _partsCtrl.text.trim();
     setState(() { _saving = true; _error = null; });
+
+    final odoError = await OdometerService.validate(
+      vehicleId: widget.vehicle.id,
+      date: _date,
+      valueKm: km,
+      excludeSource: 'maintenance',
+    );
+    if (odoError != null) {
+      if (mounted) setState(() { _saving = false; _error = odoError; });
+      return;
+    }
+
+    final items = _items
+        .map((it) => MaintenanceItem(type: it.type, notes: it.notesCtrl.text.trim()))
+        .toList();
+    final partsList = _parts
+        .where((p) => p.nameCtrl.text.trim().isNotEmpty)
+        .map((p) {
+          final price = double.tryParse(p.priceCtrl.text.replaceAll(',', '.'));
+          return MaintenancePart(
+            name: p.nameCtrl.text.trim(),
+            price: price != null && price >= 0 ? price : null,
+          );
+        })
+        .toList();
+
     try {
       await MaintenanceService.addRecord(
         vehicleId: widget.vehicle.id,
-        type: _type,
+        items: items,
         description: _descCtrl.text.trim(),
         serviceCategory: _category,
         date: _date,
@@ -537,9 +650,10 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
         intervalKm: intervalKm,
         intervalDays: intervalDays,
         performedBy: performedBy.isEmpty ? null : performedBy,
-        parts: parts.isEmpty ? null : parts,
+        partsList: partsList,
         warrantyUntil: _warrantyDate,
       );
+      if (performedBy.isNotEmpty) SuggestionsService.invalidate('provider');
       widget.onSaved();
     } catch (e) {
       if (mounted) setState(() { _saving = false; _error = 'Error al guardar'; });
@@ -610,32 +724,156 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
             ),
             const SizedBox(height: 16),
 
-            // Tipo dropdown
-            Text('TIPO DE MANTENIMIENTO', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+            // Tipos (multi-selección; el primero es el primario)
+            Text('TIPOS DE MANTENIMIENTO', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
             const SizedBox(height: 6),
-            Container(
-              decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.borderSubtle),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _type,
-                  isExpanded: true,
-                  dropdownColor: AppColors.card,
-                  style: GoogleFonts.inter(fontSize: 14, color: AppColors.textPrimary),
-                  iconEnabledColor: AppColors.textTertiary,
-                  onChanged: (v) { if (v != null) setState(() { _type = v; _applyIntervalDefaults(v); }); },
-                  items: kMaintenanceTypes.map((t) => DropdownMenuItem(
-                    value: t,
-                    child: Text(kMaintenanceTypeLabels[t] ?? t),
-                  )).toList(),
+            GestureDetector(
+              onTap: () => setState(() => _typesOpen = !_typesOpen),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: _typesOpen ? AppColors.accent.withValues(alpha: 0.4) : AppColors.borderSubtle),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _items.isEmpty
+                            ? 'Selecciona uno o más tipos'
+                            : itemsLabel(_items.map((it) => MaintenanceItem(type: it.type)).toList()),
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          color: _items.isEmpty ? AppColors.textTertiary : AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    AnimatedRotation(
+                      turns: _typesOpen ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 150),
+                      child: const Icon(Icons.keyboard_arrow_down, size: 18, color: AppColors.textTertiary),
+                    ),
+                  ],
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            if (_typesOpen) ...[
+              const SizedBox(height: 6),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 220),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.borderSubtle),
+                ),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  children: kMaintenanceTypes.map((t) {
+                    final selected = _items.any((it) => it.type == t);
+                    return InkWell(
+                      onTap: () => _toggleItemType(t),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                        child: Row(
+                          children: [
+                            Icon(
+                              selected ? Icons.check_box : Icons.check_box_outline_blank,
+                              size: 18,
+                              color: selected ? AppColors.accent : AppColors.textTertiary,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              kMaintenanceTypeLabels[t] ?? t,
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                                color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+            if (_items.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              ..._items.asMap().entries.map((e) {
+                final i = e.key;
+                final it = e.value;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.card,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.borderSubtle),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    kMaintenanceTypeLabels[it.type] ?? it.type,
+                                    style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (i == 0) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.accent.withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    child: Text('PRINCIPAL', style: GoogleFonts.jetBrainsMono(fontSize: 8, fontWeight: FontWeight.w700, color: AppColors.accent)),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () => _toggleItemType(it.type),
+                            child: const Padding(
+                              padding: EdgeInsets.all(4),
+                              child: Icon(Icons.close, size: 16, color: AppColors.textTertiary),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: it.notesCtrl,
+                        style: GoogleFonts.inter(fontSize: 13, color: AppColors.textPrimary),
+                        decoration: InputDecoration(
+                          hintText: 'Nota de este trabajo (opcional)',
+                          hintStyle: GoogleFonts.inter(fontSize: 13, color: AppColors.textTertiary),
+                          filled: true,
+                          fillColor: AppColors.surface,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.borderSubtle)),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.borderSubtle)),
+                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: AppColors.accent)),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+            const SizedBox(height: 8),
 
             // Descripción / notas
             _FormField(label: 'DESCRIPCIÓN / NOTAS', controller: _descCtrl, hint: 'Detalles del servicio, taller, observaciones...', maxLines: 3),
@@ -760,9 +998,74 @@ class _MaintenanceFormState extends State<_MaintenanceForm> {
             ),
             if (_provenanceOpen) ...[
               const SizedBox(height: 12),
-              _FormField(label: 'TALLER / MECÁNICO', controller: _performedByCtrl, hint: 'Taller Central, Juan García...'),
+              AutocompleteField(label: 'TALLER / MECÁNICO', controller: _performedByCtrl, hint: 'Taller Central, Juan García...', kind: 'provider'),
               const SizedBox(height: 12),
-              _FormField(label: 'PIEZAS USADAS', controller: _partsCtrl, hint: 'Filtro aceite, aceite 5W40 4L...', maxLines: 2),
+              Text('PIEZAS USADAS', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+              const SizedBox(height: 6),
+              ..._parts.asMap().entries.map((e) {
+                final i = e.key;
+                final p = e.value;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: p.nameCtrl,
+                          style: GoogleFonts.inter(fontSize: 13, color: AppColors.textPrimary),
+                          decoration: _partInputDecoration('Filtro de aceite...'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 90,
+                        child: TextField(
+                          controller: p.priceCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d,.]'))],
+                          onChanged: (_) => setState(() {}),
+                          style: GoogleFonts.inter(fontSize: 13, color: AppColors.textPrimary),
+                          decoration: _partInputDecoration('\$ 0.00'),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: () => _removePart(i),
+                        child: const Padding(
+                          padding: EdgeInsets.all(6),
+                          child: Icon(Icons.close, size: 16, color: AppColors.textTertiary),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              GestureDetector(
+                onTap: _addPart,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.borderSubtle),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.add, size: 15, color: AppColors.textSecondary),
+                      const SizedBox(width: 6),
+                      Text('Agregar pieza', style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                    ],
+                  ),
+                ),
+              ),
+              if (_partsSubtotal > 0) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Total piezas: \$${_partsSubtotal.toStringAsFixed(2)}',
+                  style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+                ),
+              ],
               const SizedBox(height: 12),
               Text('GARANTÍA HASTA', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
               const SizedBox(height: 6),

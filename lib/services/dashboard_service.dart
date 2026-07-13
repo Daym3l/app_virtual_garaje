@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../utils/consumption.dart';
 
 enum AlertLevel { error, warning, info }
 
@@ -86,16 +87,16 @@ class DashboardService {
               .order('date', ascending: false)
               .limit(1),
 
-      // Fuel logs for consumption calc
+      // Fuel logs for consumption calc (full-to-full)
       isElectric
           ? Future.value(<dynamic>[])
           : _db
               .from('fuel_logs')
-              .select('mileage, liters, consumption')
+              .select('mileage, liters, is_tank_full')
               .eq('vehicle_id', vehicleId)
               .gt('mileage', 0)
               .order('mileage', ascending: false)
-              .limit(10),
+              .limit(100),
 
       // All pending maintenances with next_date or next_mileage
       _db
@@ -153,34 +154,19 @@ class DashboardService {
       }
     }
 
-    // Avg consumption
+    // Avg consumption (full-to-full: acumula parciales entre tanques llenos)
     double? avgConsumption;
     if (!isElectric && consumptionLogs.isNotEmpty) {
-      final stored = consumptionLogs
-          .map((r) => (r['consumption'] as num?)?.toDouble())
-          .whereType<double>()
+      final entries = consumptionLogs
+          .map((r) => ConsumptionEntry(
+                mileage: (r['mileage'] as num?)?.toDouble() ?? 0,
+                liters: (r['liters'] as num?)?.toDouble() ?? 0,
+                isTankFull: (r['is_tank_full'] as bool?) ?? false,
+              ))
           .toList();
-      if (stored.isNotEmpty) {
-        final avgL100 = stored.reduce((a, b) => a + b) / stored.length;
-        if (avgL100 > 0) avgConsumption = 100 / avgL100;
-      } else {
-        final logs = consumptionLogs
-            .map((r) => (
-                  mileage: (r['mileage'] as num?)?.toDouble() ?? 0,
-                  liters: (r['liters'] as num?)?.toDouble() ?? 0,
-                ))
-            .where((r) => r.mileage > 0 && r.liters > 0)
-            .toList();
-        final samples = <double>[];
-        for (int i = 0; i < logs.length - 1; i++) {
-          final kmDelta = logs[i].mileage - logs[i + 1].mileage;
-          if (kmDelta > 0 && logs[i].liters > 0) {
-            samples.add(kmDelta / logs[i].liters);
-          }
-        }
-        if (samples.isNotEmpty) {
-          avgConsumption = samples.reduce((a, b) => a + b) / samples.length;
-        }
+      final result = computeConsumption(entries);
+      if (result.avgL100km != null && result.avgL100km! > 0) {
+        avgConsumption = 100 / result.avgL100km!;
       }
     }
 
@@ -271,7 +257,7 @@ class DashboardService {
 
       // Relevance filter
       final kmLeft = nextMileage != null ? nextMileage - currentMileage : null;
-      final daysLeft = nextDate != null ? nextDate.difference(now).inDays : null;
+      final daysLeft = nextDate?.difference(now).inDays;
 
       final relevant = isUrgent ||
           (kmLeft != null && kmLeft <= 1000) ||
@@ -322,7 +308,7 @@ class DashboardService {
         } else {
           subtitle = 'Vence en $daysLeft día(s)';
         }
-      } else if (!showDate && kmLeft != null) {
+      } else if (!showDate) {
         if (kmLeft <= 0) {
           subtitle = 'Vencido hace ${(-kmLeft).toStringAsFixed(0)} km';
         } else {
