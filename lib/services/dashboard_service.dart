@@ -257,7 +257,7 @@ class DashboardService {
 
       // Relevance filter
       final kmLeft = nextMileage != null ? nextMileage - currentMileage : null;
-      final daysLeft = nextDate != null ? nextDate.difference(now).inDays : null;
+      final daysLeft = nextDate?.difference(now).inDays;
 
       final relevant = isUrgent ||
           (kmLeft != null && kmLeft <= 1000) ||
@@ -308,7 +308,7 @@ class DashboardService {
         } else {
           subtitle = 'Vence en $daysLeft día(s)';
         }
-      } else if (!showDate && kmLeft != null) {
+      } else if (!showDate) {
         if (kmLeft <= 0) {
           subtitle = 'Vencido hace ${(-kmLeft).toStringAsFixed(0)} km';
         } else {
