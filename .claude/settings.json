@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter build *)",
+      "Bash(gh auth *)",
+      "Bash(git tag *)",
+      "Bash(cp build/app/outputs/flutter-apk/app-release.apk *)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}
