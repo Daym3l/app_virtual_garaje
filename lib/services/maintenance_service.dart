@@ -236,6 +236,10 @@ class MaintenanceService {
     List<MaintenancePart> partsList = const [],
     DateTime? warrantyUntil,
   }) async {
+    // Fecha a mediodía UTC del día elegido: conserva la misma fecha en
+    // cualquier zona horaria (la columna es timestamptz y guardar hora local
+    // sin offset podía correr el registro de día).
+    final day = DateTime.utc(date.year, date.month, date.day, 12);
     // next_* lo calcula el trigger de la BD al pasar un registro pendiente a
     // completado. En un INSERT el trigger no se dispara, así que para registros
     // creados ya completados se calcula aquí a partir de los intervalos.
@@ -243,7 +247,7 @@ class MaintenanceService {
     DateTime? nextDate;
     if (isCompleted) {
       if (intervalKm != null) nextMileage = mileage + intervalKm;
-      if (intervalDays != null) nextDate = date.add(Duration(days: intervalDays));
+      if (intervalDays != null) nextDate = day.add(Duration(days: intervalDays));
     }
     await _db.from('maintenances').insert({
       'vehicle_id': vehicleId,
@@ -251,7 +255,7 @@ class MaintenanceService {
       'items': items.map((i) => i.toJson()).toList(),
       'description': description,
       'service_category': serviceCategory,
-      'date': date.toIso8601String(),
+      'date': day.toIso8601String(),
       'mileage': mileage,
       'cost': cost,
       'is_completed': isCompleted,
