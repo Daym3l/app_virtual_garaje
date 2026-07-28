@@ -43,15 +43,22 @@ class MileageService {
     String? notes,
     DateTime? date,
   }) async {
+    // El odómetro se guarda como entero (km recorridos no llevan decimales).
+    final km = mileage.roundToDouble();
+    // La fecha es solo día de calendario: se fija a mediodía UTC para que
+    // se conserve la misma fecha en cualquier zona horaria (evita que un
+    // registro se corra al día anterior/siguiente al interpretarse en UTC).
+    final d = date ?? DateTime.now();
+    final normalizedDate = DateTime.utc(d.year, d.month, d.day, 12);
     await _db.from('mileage_logs').insert({
       'vehicle_id': vehicleId,
-      'mileage': mileage,
-      'date': (date ?? DateTime.now()).toIso8601String(),
+      'mileage': km,
+      'date': normalizedDate.toIso8601String(),
       'notes': notes,
     });
     await _db
         .from('vehicles')
-        .update({'current_mileage': mileage})
+        .update({'current_mileage': km})
         .eq('id', vehicleId);
   }
 }

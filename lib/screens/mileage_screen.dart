@@ -161,7 +161,10 @@ class _Header extends StatelessWidget {
   }
 
   String _relDate(DateTime d) {
-    final diff = DateTime.now().difference(d).inDays;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final that = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(that).inDays;
     if (diff == 0) return 'hoy';
     if (diff == 1) return 'ayer';
     return 'hace $diff d';
@@ -404,11 +407,12 @@ class _MileageFormState extends State<_MileageForm> {
   }
 
   Future<void> _save() async {
-    final km = double.tryParse(_kmCtrl.text.replaceAll(',', '.'));
-    if (km == null || km <= 0) {
+    final parsed = double.tryParse(_kmCtrl.text.replaceAll(',', '.'));
+    if (parsed == null || parsed <= 0) {
       setState(() => _error = 'Ingresa un kilometraje válido');
       return;
     }
+    final km = parsed.roundToDouble();
     setState(() { _saving = true; _error = null; });
     final odoError = await OdometerService.validate(
       vehicleId: widget.vehicle.id,
@@ -461,8 +465,8 @@ class _MileageFormState extends State<_MileageForm> {
             label: 'ODÓMETRO ACTUAL (KM)',
             controller: _kmCtrl,
             hint: widget.vehicle.km.toStringAsFixed(0),
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d,.]'))],
+            keyboardType: const TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           ),
           const SizedBox(height: 12),
           _DateField(date: _selectedDate, onTap: _pickDate),
