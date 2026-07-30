@@ -43,6 +43,13 @@
                 <data android:scheme="com.daym3l.virtualgaraje"/>
             </intent-filter>
         </activity>
+        <!-- Servicio de auto-ruta por Bluetooth (vigila conexión + GPS en
+             segundo plano). -->
+        <service
+            android:name=".BtAutoService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

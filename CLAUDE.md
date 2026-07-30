@@ -176,6 +176,31 @@ Tema oscuro profundo, acento azul eléctrico. **Pixel-perfect respecto a los pro
 - `get_field_suggestions(p_kind)` — `p_kind ∈ 'station'|'provider'|'location'`; valores ya escritos por el usuario, para autocompletado (`SuggestionsService` + `AutocompleteField`).
 - Consumo: la app calcula full-to-full en cliente (`lib/utils/consumption.dart`, puerto de la web) — segmentos entre tanques llenos acumulando parciales, promedio ponderado.
 
+## Auto-ruta por Bluetooth (segundo plano)
+
+Al conectarse el teléfono al dispositivo Bluetooth clásico del carro, la ruta
+empieza sola; al desconectarse, tras un timeout configurable (1/3/5/10 min), se
+finaliza. Funciona con la app en segundo plano/cerrada.
+
+- **Config** (`RouteAutoConfigService`, SharedPreferences): `route_auto_enabled`,
+  `route_auto_device_address`, `route_auto_device_name`,
+  `route_auto_disconnect_timeout_min`, `route_auto_active_vehicle_id`.
+- **Nativo** (`android/.../MainActivity.kt` + `BtAutoService.kt`, canal
+  `virtualgaraje/bt_auto`): lista dispositivos emparejados, pide
+  `BLUETOOTH_CONNECT`, y corre un **foreground service** que registra un
+  `BroadcastReceiver` de `ACL_CONNECTED/DISCONNECTED` y hace tracking GPS con
+  `LocationManager`. **Contrato clave:** el servicio lee la config de las prefs
+  de Flutter (`FlutterSharedPreferences`, claves con prefijo `flutter.`); bool
+  vía `getBoolean`, int vía `getLong`. No cambiar esos nombres sin actualizar
+  ambos lados.
+- **Handoff a Dart:** el servicio deja las rutas capturadas en prefs nativas
+  (`bt_auto_native/captured_routes`, JSON). `CapturedRoutesImporter.importAndSync`
+  las drena vía canal, las encola en `PendingRoutesStore` y las sube reutilizando
+  `RouteService.syncPending` (se llama al abrir la app y al entrar a Rutas).
+- **Requiere pruebas en dispositivo real**: BT clásico, permisos de ubicación en
+  segundo plano ("Permitir todo el tiempo") y notificaciones no son simulables.
+  Sin reinicio automático tras reboot (se reanuda al abrir la app).
+
 ## Convenciones de código
 
 - Idioma UI: **español**

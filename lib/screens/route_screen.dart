@@ -10,6 +10,7 @@ import '../services/route_service.dart';
 import '../services/pending_routes_store.dart';
 import '../services/route_auto_config.dart';
 import '../services/bt_auto_service.dart';
+import '../services/captured_routes_importer.dart';
 
 class RouteScreen extends StatefulWidget {
   const RouteScreen({super.key, required this.vehicle, required this.onRegisterFab});
@@ -70,6 +71,7 @@ class _RouteScreenState extends State<RouteScreen> {
 
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
+    try { await CapturedRoutesImporter.importAndSync(); } catch (_) {}
     try { await RouteService.syncPending(); } catch (_) {}
     try {
       final routes = await RouteService.fetchRoutes(widget.vehicle.id);
@@ -879,6 +881,23 @@ class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
       return;
     }
     setState(() { _saving = true; _error = null; });
+
+    // Para registrar la ruta con la app cerrada hace falta permiso de
+    // ubicación. Pedimos el de primer plano aquí; el usuario debe conceder
+    // "Permitir todo el tiempo" en ajustes para que funcione en segundo plano.
+    if (_enabled) {
+      final granted = await RouteService.requestPermission();
+      if (!granted) {
+        if (mounted) {
+          setState(() {
+            _saving = false;
+            _error = 'Concede el permiso de ubicación (idealmente "Todo el tiempo") para el auto-tracking';
+          });
+        }
+        return;
+      }
+    }
+
     final config = RouteAutoConfig(
       enabled: _enabled,
       deviceAddress: _deviceAddress,

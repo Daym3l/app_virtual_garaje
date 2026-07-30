@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -42,9 +43,9 @@ class MainActivity : FlutterActivity() {
                     "ensurePermission" -> ensurePermission(result)
                     "getBondedDevices" -> getBondedDevices(result)
                     "isConnected" -> isConnected(call.argument<String>("address"), result)
-                    // El servicio de vigilancia se implementa en la Fase 2.
-                    "startService" -> result.success(null)
-                    "stopService" -> result.success(null)
+                    "startService" -> startBtService(result)
+                    "stopService" -> stopBtService(result)
+                    "drainCapturedRoutes" -> drainCapturedRoutes(result)
                     else -> result.notImplemented()
                 }
             }
@@ -83,6 +84,28 @@ class MainActivity : FlutterActivity() {
             pendingPermissionResult?.success(granted)
             pendingPermissionResult = null
         }
+    }
+
+    private fun startBtService(result: MethodChannel.Result) {
+        val intent = Intent(this, BtAutoService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        result.success(null)
+    }
+
+    private fun stopBtService(result: MethodChannel.Result) {
+        stopService(Intent(this, BtAutoService::class.java))
+        result.success(null)
+    }
+
+    private fun drainCapturedRoutes(result: MethodChannel.Result) {
+        val prefs = getSharedPreferences(BtAutoService.PREFS_NATIVE, Context.MODE_PRIVATE)
+        val raw = prefs.getString(BtAutoService.KEY_CAPTURED, "[]")
+        prefs.edit().remove(BtAutoService.KEY_CAPTURED).apply()
+        result.success(raw)
     }
 
     private fun bluetoothAdapter() =

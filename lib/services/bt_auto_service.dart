@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/services.dart';
 
 /// Un dispositivo Bluetooth emparejado en el teléfono.
@@ -73,4 +74,23 @@ class BtAutoService {
       // Ídem.
     }
   }
+
+  /// Extrae (y limpia) las rutas que el servicio nativo capturó en segundo
+  /// plano mientras la app estaba cerrada. Cada entrada es un mapa con
+  /// vehicle_id, start_time, end_time, points, total_distance, average_speed.
+  static Future<List<Map<String, dynamic>>> drainCapturedRoutes() async {
+    try {
+      final raw = await _channel.invokeMethod<String>('drainCapturedRoutes');
+      if (raw == null || raw.isEmpty) return const [];
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
 }
+
