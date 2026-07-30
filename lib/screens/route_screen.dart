@@ -8,6 +8,8 @@ import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/route_service.dart';
 import '../services/pending_routes_store.dart';
+import '../services/route_auto_config.dart';
+import '../services/bt_auto_service.dart';
 
 class RouteScreen extends StatefulWidget {
   const RouteScreen({super.key, required this.vehicle, required this.onRegisterFab});
@@ -25,11 +27,13 @@ class _RouteScreenState extends State<RouteScreen> {
   bool _syncing = false;
   int _pendingCount = 0;
   String? _error;
+  RouteAutoConfig _autoConfig = const RouteAutoConfig();
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadAutoConfig();
     widget.onRegisterFab(_startTracking);
   }
 
@@ -38,8 +42,30 @@ class _RouteScreenState extends State<RouteScreen> {
     super.didUpdateWidget(old);
     if (old.vehicle.id != widget.vehicle.id) {
       _load();
+      _loadAutoConfig();
       widget.onRegisterFab(_startTracking);
     }
+  }
+
+  Future<void> _loadAutoConfig() async {
+    // El servicio de segundo plano necesita saber a qué vehículo atribuir las
+    // rutas automáticas: se persiste el vehículo activo actual.
+    await RouteAutoConfigService.setActiveVehicle(widget.vehicle.id);
+    final config = await RouteAutoConfigService.load();
+    if (mounted) setState(() => _autoConfig = config);
+  }
+
+  Future<void> _openAutoSettings() async {
+    final updated = await showModalBottomSheet<RouteAutoConfig>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AutoRouteSettingsSheet(
+        vehicleId: widget.vehicle.id,
+        initial: _autoConfig,
+      ),
+    );
+    if (updated != null && mounted) setState(() => _autoConfig = updated);
   }
 
   Future<void> _load() async {
@@ -117,6 +143,9 @@ class _RouteScreenState extends State<RouteScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverToBoxAdapter(child: _Header(routes: _routes)),
+          SliverToBoxAdapter(
+            child: _AutoRouteCard(config: _autoConfig, onTap: _openAutoSettings),
+          ),
           if (_pendingCount > 0)
             SliverToBoxAdapter(
               child: _PendingBanner(count: _pendingCount, syncing: _syncing, onRetry: _retrySync),
@@ -716,6 +745,349 @@ class _RouteDetailScreen extends StatelessWidget {
     if (h > 0) return '${h}h ${m}m';
     if (m > 0) return '${m}m ${s}s';
     return '${s}s';
+  }
+}
+
+// ── Auto-ruta: tarjeta de estado ───────────────────────────────────────────────
+
+class _AutoRouteCard extends StatelessWidget {
+  const _AutoRouteCard({required this.config, required this.onTap});
+  final RouteAutoConfig config;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = config.enabled && config.isConfigured;
+    final Color accent = active ? AppColors.success : AppColors.textTertiary;
+    final String subtitle;
+    if (active) {
+      subtitle = '${config.deviceName ?? 'Dispositivo'} · corte ${config.disconnectTimeoutMin} min';
+    } else if (config.isConfigured) {
+      subtitle = 'Desactivada · toca para activar';
+    } else {
+      subtitle = 'Toca para vincular un dispositivo';
+    }
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: active ? AppColors.success.withValues(alpha: 0.35) : AppColors.borderSubtle,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38, height: 38,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(Icons.bluetooth, size: 18, color: accent),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        'Auto-ruta por Bluetooth',
+                        style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          active ? 'ON' : 'OFF',
+                          style: GoogleFonts.jetBrainsMono(fontSize: 8, fontWeight: FontWeight.w700, color: accent),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: GoogleFonts.inter(fontSize: 11, color: AppColors.textTertiary)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 16, color: AppColors.textTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Auto-ruta: hoja de configuración ───────────────────────────────────────────
+
+class _AutoRouteSettingsSheet extends StatefulWidget {
+  const _AutoRouteSettingsSheet({required this.vehicleId, required this.initial});
+  final String vehicleId;
+  final RouteAutoConfig initial;
+
+  @override
+  State<_AutoRouteSettingsSheet> createState() => _AutoRouteSettingsSheetState();
+}
+
+class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
+  late bool _enabled;
+  String? _deviceAddress;
+  String? _deviceName;
+  late int _timeout;
+  List<BtDevice> _devices = [];
+  bool _loadingDevices = false;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _enabled = widget.initial.enabled;
+    _deviceAddress = widget.initial.deviceAddress;
+    _deviceName = widget.initial.deviceName;
+    _timeout = widget.initial.disconnectTimeoutMin;
+  }
+
+  Future<void> _loadDevices() async {
+    setState(() { _loadingDevices = true; _error = null; });
+    final granted = await BtAutoService.ensureBluetoothPermission();
+    if (!granted) {
+      if (mounted) setState(() { _loadingDevices = false; _error = 'Permiso de Bluetooth requerido'; });
+      return;
+    }
+    final devices = await BtAutoService.bondedDevices();
+    if (!mounted) return;
+    setState(() { _devices = devices; _loadingDevices = false; });
+    if (devices.isEmpty) {
+      setState(() => _error = 'No hay dispositivos emparejados. Empareja el del carro en los ajustes de Bluetooth.');
+    }
+  }
+
+  Future<void> _save() async {
+    if (_enabled && (_deviceAddress == null || _deviceAddress!.isEmpty)) {
+      setState(() => _error = 'Elige un dispositivo para activar el auto-tracking');
+      return;
+    }
+    setState(() { _saving = true; _error = null; });
+    final config = RouteAutoConfig(
+      enabled: _enabled,
+      deviceAddress: _deviceAddress,
+      deviceName: _deviceName,
+      disconnectTimeoutMin: _timeout,
+      activeVehicleId: widget.vehicleId,
+    );
+    await RouteAutoConfigService.save(config);
+    if (_enabled) {
+      await BtAutoService.startService();
+    } else {
+      await BtAutoService.stopService();
+    }
+    if (mounted) Navigator.pop(context, config);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.fromLTRB(16, 20, 16, 24 + bottom),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(color: AppColors.borderSubtle, borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text('Auto-ruta por Bluetooth', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+            const SizedBox(height: 6),
+            Text(
+              'Al conectarse el teléfono al dispositivo del carro, la ruta empieza sola; al desconectarse (pasado el tiempo de espera) se finaliza.',
+              style: GoogleFonts.inter(fontSize: 12, color: AppColors.textTertiary, height: 1.4),
+            ),
+            const SizedBox(height: 18),
+
+            // Activar
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.card,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.borderSubtle),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('Activar auto-tracking', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                  ),
+                  Switch(
+                    value: _enabled,
+                    activeColor: AppColors.success,
+                    onChanged: (v) {
+                      setState(() => _enabled = v);
+                      if (v && _devices.isEmpty) _loadDevices();
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Dispositivo
+            Text('DISPOSITIVO VINCULADO', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+            const SizedBox(height: 8),
+            if (_deviceName != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.card,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.accent.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.bluetooth_connected, size: 16, color: AppColors.accent),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_deviceName!, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                          Text(_deviceAddress ?? '', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            GestureDetector(
+              onTap: _loadingDevices ? null : _loadDevices,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 11),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.borderSubtle),
+                ),
+                child: Center(
+                  child: _loadingDevices
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent))
+                      : Text(
+                          _deviceName == null ? 'Buscar dispositivos emparejados' : 'Cambiar dispositivo',
+                          style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.accent),
+                        ),
+                ),
+              ),
+            ),
+            if (_devices.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              ..._devices.map((d) {
+                final selected = d.address == _deviceAddress;
+                return GestureDetector(
+                  onTap: () => setState(() { _deviceAddress = d.address; _deviceName = d.name; }),
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    decoration: BoxDecoration(
+                      color: AppColors.card,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: selected ? AppColors.accent : AppColors.borderSubtle),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                            size: 18, color: selected ? AppColors.accent : AppColors.textTertiary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(d.name, style: GoogleFonts.inter(fontSize: 13, color: AppColors.textPrimary), overflow: TextOverflow.ellipsis),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            ],
+            const SizedBox(height: 16),
+
+            // Timeout
+            Text('ESPERA TRAS DESCONEXIÓN', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+            const SizedBox(height: 4),
+            Text('Si se reconecta dentro de este tiempo, la ruta continúa.', style: GoogleFonts.inter(fontSize: 11, color: AppColors.textTertiary)),
+            const SizedBox(height: 8),
+            Row(
+              children: RouteAutoConfig.timeoutOptions.map((min) {
+                final selected = min == _timeout;
+                return Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _timeout = min),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(vertical: 11),
+                      decoration: BoxDecoration(
+                        color: selected ? AppColors.accent.withValues(alpha: 0.15) : AppColors.card,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: selected ? AppColors.accent : AppColors.borderSubtle),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$min min',
+                          style: GoogleFonts.jetBrainsMono(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: selected ? AppColors.accent : AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.danger)),
+            ],
+            const SizedBox(height: 20),
+
+            GestureDetector(
+              onTap: _saving ? null : _save,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                decoration: BoxDecoration(
+                  color: _saving ? AppColors.accent.withValues(alpha: 0.5) : AppColors.accent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Center(
+                  child: _saving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : Text('Guardar', style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
