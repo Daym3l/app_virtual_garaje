@@ -334,7 +334,10 @@ class _StatsGrid extends StatelessWidget {
   String _maintSub(MaintenanceAlert a) => a.subtitle;
 
   String _relativeDate(DateTime date) {
-    final diff = DateTime.now().difference(date).inDays;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final that = DateTime(date.year, date.month, date.day);
+    final diff = today.difference(that).inDays;
     if (diff == 0) return 'hoy';
     if (diff == 1) return 'ayer';
     return 'hace $diff días';

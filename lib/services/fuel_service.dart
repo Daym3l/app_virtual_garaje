@@ -108,9 +108,13 @@ class FuelService {
     bool isTankFull = true,
   }) async {
     final costPerLiter = liters > 0 ? cost / liters : null;
+    // Fecha a mediodía UTC del día elegido: conserva la misma fecha en
+    // cualquier zona horaria (la columna es timestamptz y guardar hora local
+    // sin offset podía correr el registro de día).
+    final d = DateTime.utc(date.year, date.month, date.day, 12);
     await _db.from('fuel_logs').insert({
       'vehicle_id': vehicleId,
-      'date': date.toIso8601String(),
+      'date': d.toIso8601String(),
       'liters': liters,
       'cost': cost,
       'mileage': mileage,
