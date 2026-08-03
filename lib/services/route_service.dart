@@ -172,6 +172,16 @@ class RouteService {
     return (data as List).map((j) => RouteRecord.fromJson(j)).toList();
   }
 
+  /// Total de rutas del vehículo. `fetchRoutes` está limitado a 20, así que no
+  /// sirve para numerar la ruta siguiente.
+  static Future<int> countRoutes(String vehicleId) async {
+    return await _db
+        .from('routes')
+        .count()
+        .eq('vehicle_id', vehicleId)
+        .timeout(const Duration(seconds: 10));
+  }
+
   static Future<void> saveRoute({
     required String vehicleId,
     required DateTime startTime,
@@ -186,26 +196,59 @@ class RouteService {
   }) async {
     // id de cliente → upsert idempotente: reintentar no duplica la ruta.
     final id = routeId ?? PendingRoutesStore.newId();
-    final newMileage = currentMileage + totalDistance;
-    await Future.wait([
-      _db.from('routes').upsert({
+
+    await _db.from('routes').upsert({
+      'id': id,
+      'vehicle_id': vehicleId,
+      'start_time': startTime.toUtc().toIso8601String(),
+      'end_time': endTime.toUtc().toIso8601String(),
+      'points': points.map((p) => p.toJson()).toList(),
+      'total_distance': totalDistance,
+      'average_speed': averageSpeed,
+      'notes': notes ?? '',
+    }, onConflict: 'id').timeout(const Duration(seconds: 15));
+
+    // El odómetro base se lee de la BD, no del vehículo en memoria: al cerrar
+    // rutas consecutivas sin recargar, el valor del cliente sigue siendo el
+    // previo a la primera ruta y la segunda pisaría su kilometraje.
+    final veh = await _db
+        .from('vehicles')
+        .select('current_mileage')
+        .eq('id', vehicleId)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 10));
+    final dbMileage = (veh?['current_mileage'] as num?)?.toDouble() ?? currentMileage;
+
+    // El registro de km comparte id con la ruta: si el guardado se reintenta
+    // tras una caída parcial, no se suma la distancia dos veces.
+    final logged = await _db
+        .from('mileage_logs')
+        .select('mileage')
+        .eq('id', id)
+        .maybeSingle()
+        .timeout(const Duration(seconds: 10));
+
+    double newMileage;
+    if (logged != null) {
+      newMileage = (logged['mileage'] as num).toDouble();
+    } else {
+      newMileage = max(dbMileage, currentMileage) + totalDistance;
+      await _db.from('mileage_logs').insert({
         'id': id,
-        'vehicle_id': vehicleId,
-        'start_time': startTime.toUtc().toIso8601String(),
-        'end_time': endTime.toUtc().toIso8601String(),
-        'points': points.map((p) => p.toJson()).toList(),
-        'total_distance': totalDistance,
-        'average_speed': averageSpeed,
-        'notes': notes ?? '',
-      }, onConflict: 'id'),
-      _db.from('mileage_logs').insert({
         'vehicle_id': vehicleId,
         'mileage': newMileage,
         'date': endTime.toUtc().toIso8601String(),
         'notes': 'Ruta #$routeNumber — ${totalDistance.toStringAsFixed(2)} km recorridos',
-      }),
-      _db.from('vehicles').update({'current_mileage': newMileage}).eq('id', vehicleId),
-    ]).timeout(const Duration(seconds: 15));
+      }).timeout(const Duration(seconds: 10));
+    }
+
+    if (newMileage > dbMileage) {
+      await _db
+          .from('vehicles')
+          .update({'current_mileage': newMileage})
+          .eq('id', vehicleId)
+          .timeout(const Duration(seconds: 10));
+    }
   }
 
   /// Intenta guardar la ruta online; si falla (p. ej. sin red) la guarda en el
@@ -262,16 +305,6 @@ class RouteService {
     int synced = 0;
     for (final p in pending) {
       try {
-        // Recalcula el kilometraje desde el estado actual del vehículo para no
-        // introducir regresiones si cambió mientras la ruta estuvo en cola.
-        final veh = await _db
-            .from('vehicles')
-            .select('current_mileage')
-            .eq('id', p.vehicleId)
-            .maybeSingle()
-            .timeout(const Duration(seconds: 10));
-        final curMileage =
-            (veh?['current_mileage'] as num?)?.toDouble() ?? p.currentMileage;
         await saveRoute(
           vehicleId: p.vehicleId,
           startTime: p.startTime,
@@ -279,7 +312,7 @@ class RouteService {
           points: p.points,
           totalDistance: p.totalDistance,
           averageSpeed: p.averageSpeed,
-          currentMileage: curMileage,
+          currentMileage: p.currentMileage,
           routeNumber: p.routeNumber,
           notes: p.notes,
           routeId: p.id,

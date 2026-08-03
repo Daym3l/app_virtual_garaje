@@ -2,8 +2,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <!-- Ubicación en segundo plano: el auto-tracking sigue registrando la ruta
+         con la app cerrada. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION"/>
+    <!-- Bluetooth clásico: detectar conexión/desconexión del dispositivo del
+         carro para arrancar/detener la ruta automáticamente. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
     <application
         android:label="Mi Garaje Virtual"
         android:name="${applicationName}"
@@ -36,6 +43,13 @@
                 <data android:scheme="com.daym3l.virtualgaraje"/>
             </intent-filter>
         </activity>
+        <!-- Servicio de auto-ruta por Bluetooth (vigila conexión + GPS en
+             segundo plano). -->
+        <service
+            android:name=".BtAutoService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

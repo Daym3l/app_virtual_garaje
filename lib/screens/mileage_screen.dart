@@ -7,9 +7,15 @@ import '../services/mileage_service.dart';
 import '../services/odometer_service.dart';
 
 class MileageScreen extends StatefulWidget {
-  const MileageScreen({super.key, required this.vehicle, required this.onRegisterFab});
+  const MileageScreen({
+    super.key,
+    required this.vehicle,
+    required this.onRegisterFab,
+    required this.onVehicleUpdated,
+  });
   final Vehicle vehicle;
   final void Function(VoidCallback) onRegisterFab;
+  final Future<void> Function() onVehicleUpdated;
 
   @override
   State<MileageScreen> createState() => _MileageScreenState();
@@ -34,6 +40,7 @@ class _MileageScreenState extends State<MileageScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
+    await widget.onVehicleUpdated();
     final logs = await MileageService.fetchLogs(widget.vehicle.id);
     if (mounted) setState(() { _logs = logs; _loading = false; });
   }
@@ -465,7 +472,7 @@ class _MileageFormState extends State<_MileageForm> {
             label: 'ODÓMETRO ACTUAL (KM)',
             controller: _kmCtrl,
             hint: widget.vehicle.km.toStringAsFixed(0),
-            keyboardType: const TextInputType.number,
+            keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           ),
           const SizedBox(height: 12),

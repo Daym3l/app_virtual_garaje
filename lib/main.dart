@@ -5,6 +5,9 @@ import 'config/env.dart';
 import 'services/auth_service.dart';
 import 'services/fcm_service.dart';
 import 'services/route_service.dart';
+import 'services/route_auto_config.dart';
+import 'services/bt_auto_service.dart';
+import 'services/captured_routes_importer.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
 import 'screens/shell_screen.dart';
@@ -64,7 +67,19 @@ class _AuthGateState extends State<_AuthGate> {
   }
 
   void _syncPendingRoutes() {
-    RouteService.syncPending().catchError((_) => 0);
+    // Importa rutas capturadas por el servicio nativo (auto-tracking BT) y
+    // sube todo lo pendiente. Reanuda el servicio de vigilancia si estaba
+    // activado (p. ej. tras cerrar la app).
+    () async {
+      try { await CapturedRoutesImporter.importAndSync(); } catch (_) {}
+      try { await RouteService.syncPending(); } catch (_) {}
+      try {
+        final config = await RouteAutoConfigService.load();
+        if (config.enabled && config.isConfigured) {
+          await BtAutoService.startService();
+        }
+      } catch (_) {}
+    }();
   }
 
   @override

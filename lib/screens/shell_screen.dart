@@ -90,6 +90,21 @@ class _ShellScreenState extends State<ShellScreen> {
     }
   }
 
+  /// Relee los vehículos tras un cambio de odómetro (ruta, km, repostaje) para
+  /// que las pantallas no sigan mostrando el kilometraje con el que se abrieron.
+  Future<void> _refreshVehicles() async {
+    try {
+      final list = await VehicleService.fetchVehicles();
+      if (!mounted) return;
+      final activeId = _activeVehicle?.id;
+      setState(() {
+        _vehicles = list;
+        _activeVehicle =
+            list.where((v) => v.id == activeId).firstOrNull ?? _activeVehicle;
+      });
+    } catch (_) {}
+  }
+
   void _showSnack(String msg, {Color? color}) {
     setState(() {
       _snackMessage = msg;
@@ -267,6 +282,7 @@ class _ShellScreenState extends State<ShellScreen> {
           onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _fabAction = fn);
           }),
+          onVehicleUpdated: _refreshVehicles,
         );
       case AppTab.fuel:
         return FuelScreen(
@@ -274,6 +290,7 @@ class _ShellScreenState extends State<ShellScreen> {
           onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _fabAction = fn);
           }),
+          onVehicleUpdated: _refreshVehicles,
         );
       case AppTab.maintenance:
         return MaintenanceScreen(
@@ -289,6 +306,7 @@ class _ShellScreenState extends State<ShellScreen> {
           onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _fabAction = fn);
           }),
+          onVehicleUpdated: _refreshVehicles,
         );
       default:
         return const SizedBox.shrink();
