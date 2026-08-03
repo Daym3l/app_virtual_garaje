@@ -47,6 +47,7 @@ class MainActivity : FlutterActivity() {
                     "startService" -> startBtService(result)
                     "stopService" -> stopBtService(result)
                     "drainCapturedRoutes" -> drainCapturedRoutes(result)
+                    "checkPendingRoute" -> checkPendingRoute(result)
                     else -> result.notImplemented()
                 }
             }
@@ -99,6 +100,22 @@ class MainActivity : FlutterActivity() {
 
     private fun stopBtService(result: MethodChannel.Result) {
         stopService(Intent(this, BtAutoService::class.java))
+        result.success(null)
+    }
+
+    /// Red de seguridad: fuerza al servicio a cerrar una ruta cuyo timeout de
+    /// desconexión ya venció, por si la alarma se retrasó en Doze.
+    private fun checkPendingRoute(result: MethodChannel.Result) {
+        val intent = Intent(this, BtAutoService::class.java).setAction(BtAutoService.ACTION_CHECK)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) {
+            // El servicio puede estar detenido (auto-ruta desactivada): sin efecto.
+        }
         result.success(null)
     }
 

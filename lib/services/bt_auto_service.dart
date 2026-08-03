@@ -75,6 +75,16 @@ class BtAutoService {
     }
   }
 
+  /// Pide al servicio nativo que cierre una ruta cuyo timeout de desconexión
+  /// ya venció. Red de seguridad por si la alarma se retrasó en Doze.
+  static Future<void> checkPendingRoute() async {
+    try {
+      await _channel.invokeMethod('checkPendingRoute');
+    } on PlatformException {
+      // Servicio detenido o auto-ruta desactivada: sin efecto.
+    }
+  }
+
   /// Extrae (y limpia) las rutas que el servicio nativo capturó en segundo
   /// plano mientras la app estaba cerrada. Cada entrada es un mapa con
   /// vehicle_id, start_time, end_time, points, total_distance, average_speed.

@@ -87,6 +87,16 @@ class PendingRoutesStore {
   static Future<void> add(PendingRoute route) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getStringList(_key) ?? <String>[];
+    // El id viene del origen (ruta manual o servicio nativo): encolar dos veces
+    // el mismo id duplicaría la ruta al sincronizar.
+    final already = raw.any((s) {
+      try {
+        return (jsonDecode(s) as Map<String, dynamic>)['id'] == route.id;
+      } catch (_) {
+        return false;
+      }
+    });
+    if (already) return;
     raw.add(jsonEncode(route.toJson()));
     await prefs.setStringList(_key, raw);
   }
