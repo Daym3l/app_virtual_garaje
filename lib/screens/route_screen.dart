@@ -882,7 +882,13 @@ class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
     }
     final devices = await BtAutoService.bondedDevices();
     if (!mounted) return;
-    setState(() { _devices = devices; _loadingDevices = false; });
+    setState(() {
+      _devices = devices;
+      _loadingDevices = false;
+      // Refresca el nombre guardado por si se renombró el dispositivo.
+      final current = devices.where((d) => d.address == _deviceAddress).firstOrNull;
+      if (current != null) _deviceName = current.name;
+    });
     if (devices.isEmpty) {
       setState(() => _error = 'No hay dispositivos emparejados. Empareja el del carro en los ajustes de Bluetooth.');
     }
