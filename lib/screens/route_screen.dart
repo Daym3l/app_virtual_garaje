@@ -13,9 +13,15 @@ import '../services/bt_auto_service.dart';
 import '../services/captured_routes_importer.dart';
 
 class RouteScreen extends StatefulWidget {
-  const RouteScreen({super.key, required this.vehicle, required this.onRegisterFab});
+  const RouteScreen({
+    super.key,
+    required this.vehicle,
+    required this.onRegisterFab,
+    required this.onVehicleUpdated,
+  });
   final Vehicle vehicle;
   final void Function(VoidCallback) onRegisterFab;
+  final Future<void> Function() onVehicleUpdated;
 
   @override
   State<RouteScreen> createState() => _RouteScreenState();
@@ -73,6 +79,7 @@ class _RouteScreenState extends State<RouteScreen> {
     setState(() { _loading = true; _error = null; });
     try { await CapturedRoutesImporter.importAndSync(); } catch (_) {}
     try { await RouteService.syncPending(); } catch (_) {}
+    await widget.onVehicleUpdated();
     try {
       final routes = await RouteService.fetchRoutes(widget.vehicle.id);
       final pending = await PendingRoutesStore.countForVehicle(widget.vehicle.id);
@@ -114,7 +121,13 @@ class _RouteScreenState extends State<RouteScreen> {
     }
     if (!mounted) return;
     final vehicle = widget.vehicle;
-    final routeNumber = _routes.length + 1;
+    int routeNumber;
+    try {
+      routeNumber = await RouteService.countRoutes(vehicle.id) + 1;
+    } catch (_) {
+      routeNumber = _routes.length + 1;
+    }
+    if (!mounted) return;
     setState(() => _tracking = true);
     await showModalBottomSheet(
       context: context,

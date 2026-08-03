@@ -9,9 +9,15 @@ import '../services/suggestions_service.dart';
 import '../widgets/autocomplete_field.dart';
 
 class FuelScreen extends StatefulWidget {
-  const FuelScreen({super.key, required this.vehicle, required this.onRegisterFab});
+  const FuelScreen({
+    super.key,
+    required this.vehicle,
+    required this.onRegisterFab,
+    required this.onVehicleUpdated,
+  });
   final Vehicle vehicle;
   final void Function(VoidCallback) onRegisterFab;
+  final Future<void> Function() onVehicleUpdated;
 
   @override
   State<FuelScreen> createState() => _FuelScreenState();
@@ -39,6 +45,7 @@ class _FuelScreenState extends State<FuelScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
+    await widget.onVehicleUpdated();
     if (_isElectric) {
       final logs = await FuelService.fetchEnergyLogs(widget.vehicle.id);
       if (mounted) setState(() { _energyLogs = logs; _loading = false; });

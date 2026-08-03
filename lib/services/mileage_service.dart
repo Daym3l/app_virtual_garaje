@@ -33,6 +33,7 @@ class MileageService {
         .select()
         .eq('vehicle_id', vehicleId)
         .order('date', ascending: false)
+        .order('mileage', ascending: false)
         .limit(50);
     return (data as List).map((j) => MileageLog.fromJson(j)).toList();
   }
