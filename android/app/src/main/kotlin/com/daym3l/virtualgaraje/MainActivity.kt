@@ -3,6 +3,7 @@ package com.daym3l.virtualgaraje
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
@@ -111,6 +112,24 @@ class MainActivity : FlutterActivity() {
     private fun bluetoothAdapter() =
         (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
+    /// El alias es el nombre que el usuario le puso al dispositivo en los
+    /// ajustes de Bluetooth; `name` es el de fábrica. Se prefiere el alias para
+    /// que la lista coincida con lo que ve en el teléfono.
+    private fun deviceLabel(device: BluetoothDevice): String {
+        val alias = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            device.alias
+        } else {
+            try {
+                device.javaClass.getMethod("getAliasName").invoke(device) as? String
+            } catch (e: Exception) {
+                null
+            }
+        }
+        return alias?.takeIf { it.isNotBlank() }
+            ?: device.name?.takeIf { it.isNotBlank() }
+            ?: device.address
+    }
+
     private fun getBondedDevices(result: MethodChannel.Result) {
         if (!hasBtConnectPermission()) {
             result.error("no_permission", "Falta permiso Bluetooth", null)
@@ -123,7 +142,7 @@ class MainActivity : FlutterActivity() {
         }
         try {
             val list = adapter.bondedDevices.map { d ->
-                mapOf("name" to (d.name ?: ""), "address" to d.address)
+                mapOf("name" to deviceLabel(d), "address" to d.address)
             }
             result.success(list)
         } catch (e: SecurityException) {
