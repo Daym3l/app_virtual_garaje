@@ -238,7 +238,9 @@ class RouteService {
         'vehicle_id': vehicleId,
         'mileage': newMileage,
         'date': endTime.toUtc().toIso8601String(),
-        'notes': 'Ruta #$routeNumber — ${totalDistance.toStringAsFixed(2)} km recorridos',
+        'notes': routeNumber > 0
+            ? 'Ruta #$routeNumber — ${totalDistance.toStringAsFixed(2)} km recorridos'
+            : 'Ruta automática — ${totalDistance.toStringAsFixed(2)} km recorridos',
       }).timeout(const Duration(seconds: 10));
     }
 

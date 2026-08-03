@@ -9,6 +9,9 @@ class CapturedRoutesImporter {
   /// Drena la cola nativa, encola cada ruta como pendiente y dispara la
   /// sincronización. Devuelve cuántas rutas se importaron.
   static Future<int> importAndSync() async {
+    // Antes de drenar: si quedó una ruta abierta cuyo timeout ya venció, que el
+    // servicio la cierre para que entre en esta misma importación.
+    await BtAutoService.checkPendingRoute();
     final captured = await BtAutoService.drainCapturedRoutes();
     int imported = 0;
 
@@ -23,8 +26,12 @@ class CapturedRoutesImporter {
             .toList();
         if (points.length < 2) continue;
 
+        // El id lo genera el servicio nativo y se conserva hasta Supabase: si
+        // una ruta se importa dos veces, el upsert la reconoce y su distancia
+        // no se suma otra vez al odómetro.
+        final nativeId = (m['route_id'] as String?)?.trim();
         await PendingRoutesStore.add(PendingRoute(
-          id: PendingRoutesStore.newId(),
+          id: nativeId?.isNotEmpty == true ? nativeId! : PendingRoutesStore.newId(),
           vehicleId: vehicleId,
           startTime: DateTime.parse(m['start_time'] as String),
           endTime: DateTime.parse(m['end_time'] as String),
