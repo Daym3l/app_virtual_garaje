@@ -6,7 +6,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -20,6 +22,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
@@ -59,10 +62,46 @@ class BtAutoService : Service() {
         const val PREFS_NATIVE = "bt_auto_native"
         const val KEY_CAPTURED = "captured_routes"
         const val KEY_PROGRESS = "route_in_progress"
+        const val KEY_EVENTS = "event_log"
         const val ACTION_FINALIZE = "com.daym3l.virtualgaraje.action.FINALIZE_ROUTE"
         const val ACTION_CHECK = "com.daym3l.virtualgaraje.action.CHECK_ROUTE"
         private const val ALARM_REQUEST = 7702
+        private const val RECONCILE_REQUEST = 7704
+        // Backstop por si no llega ningún broadcast: repaso frecuente pero sin
+        // despertar el teléfono (se ejecuta cuando ya está despierto).
+        private const val RECONCILE_INTERVAL_MS = 2 * 60_000L
+        private const val CONNECTION_RECHECK_MS = 15_000L
+        private const val ACTION_A2DP_STATE = "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED"
+        private const val ACTION_HEADSET_STATE = "android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED"
         private const val PERSIST_EVERY_POINTS = 5
+        private const val TAG = "BtAuto"
+        private const val MAX_EVENTS = 120
+
+        /// Estado observable desde la UI (mismo proceso) para el diagnóstico.
+        @Volatile var running = false
+        @Volatile var state = "detenido"
+        @Volatile var livePoints = 0
+        @Volatile var liveDistanceKm = 0.0
+        @Volatile var liveDisconnectedAt = 0L
+        @Volatile var liveStartedAt = 0L
+
+        /// Registro de eventos: la auto-ruta se prueba en la calle, sin adb, así
+        /// que el historial se persiste y se muestra dentro de la app.
+        fun logEvent(context: Context, msg: String) {
+            Log.i(TAG, msg)
+            val prefs = context.getSharedPreferences(PREFS_NATIVE, Context.MODE_PRIVATE)
+            val arr = runCatching { JSONArray(prefs.getString(KEY_EVENTS, "[]")) }
+                .getOrDefault(JSONArray())
+            arr.put(JSONObject().put("t", System.currentTimeMillis()).put("m", msg))
+            val out = if (arr.length() > MAX_EVENTS) {
+                JSONArray().also { trimmed ->
+                    for (i in (arr.length() - MAX_EVENTS) until arr.length()) trimmed.put(arr.get(i))
+                }
+            } else {
+                arr
+            }
+            prefs.edit().putString(KEY_EVENTS, out.toString()).apply()
+        }
     }
 
     private var receiver: BroadcastReceiver? = null
@@ -80,25 +119,48 @@ class BtAutoService : Service() {
     private var lastLng = 0.0
     private var hasLast = false
     private var pointsSincePersist = 0
+    private var lastConnectionCheckMs = 0L
+    private var lastLoggedConnected: Boolean? = null
+    private var a2dpProxy: BluetoothProfile? = null
+    private var headsetProxy: BluetoothProfile? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        startForeground(NOTIF_ID, buildNotification("Auto-ruta activa", "Esperando conexión del dispositivo"))
+        try {
+            startForeground(NOTIF_ID, buildNotification("Auto-ruta activa", "Esperando conexión del dispositivo"))
+            running = true
+            state = "esperando"
+            log("servicio iniciado (dispositivo=${deviceAddress() ?: "sin configurar"}, timeout=${timeoutMs() / 60_000}min)")
+        } catch (e: Exception) {
+            // Android 14 rechaza el tipo "location" sin permiso de ubicación.
+            log("ERROR al arrancar en primer plano: ${e.javaClass.simpleName} ${e.message}")
+            stopSelf()
+            return
+        }
         registerBtReceiver()
+        bindProfileProxies()
         restoreProgress()
+        // ACL_CONNECTED solo llega cuando la conexión ocurre; si el dispositivo
+        // ya estaba conectado al arrancar el servicio (config guardada dentro
+        // del carro, app reinstalada, teléfono reiniciado) el evento nunca
+        // llega y la ruta no empezaría jamás.
+        syncWithConnectionState()
+        scheduleReconcileAlarm()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_FINALIZE -> {
+                log("alarma de cierre disparada")
                 finalizeRoute()
                 return START_STICKY
             }
             ACTION_CHECK -> {
                 finalizeIfStale()
+                syncWithConnectionState()
                 // La app puede lanzar el chequeo con la auto-ruta ya desactivada:
                 // en ese caso el servicio no debe quedarse vivo.
                 if (!isEnabled() || deviceAddress() == null) {
@@ -116,13 +178,20 @@ class BtAutoService : Service() {
     }
 
     override fun onDestroy() {
+        log("servicio detenido (ruta abierta=$tracking)")
         receiver?.let { runCatching { unregisterReceiver(it) } }
         cancelFinalizeAlarm()
+        cancelReconcileAlarm()
+        closeProfileProxies()
         // Al pararse el servicio con una ruta abierta se cierra y se guarda:
         // perder el recorrido sería peor que registrarlo con el corte de aquí.
         if (tracking) finalizeRoute()
+        running = false
+        state = "detenido"
         super.onDestroy()
     }
+
+    private fun log(msg: String) = logEvent(this, msg)
 
     // ── Config (leída de las prefs de Flutter) ──────────────────────────────────
 
@@ -133,6 +202,10 @@ class BtAutoService : Service() {
         flutterPrefs().getString("flutter.route_auto_device_address", null)
     private fun vehicleId(): String? =
         flutterPrefs().getString("flutter.route_auto_active_vehicle_id", null)
+    private fun deviceLabel(): String =
+        flutterPrefs().getString("flutter.route_auto_device_name", null)
+            ?.takeIf { it.isNotBlank() }
+            ?: "dispositivo del carro"
     private fun timeoutMs(): Long {
         // shared_preferences guarda los int de Dart como Long.
         val min = flutterPrefs().getLong("flutter.route_auto_disconnect_timeout_min", 3L)
@@ -142,9 +215,17 @@ class BtAutoService : Service() {
     // ── Bluetooth ───────────────────────────────────────────────────────────────
 
     private fun registerBtReceiver() {
+        // No basta con ACL: según el equipo y la ROM el enlace ACL puede caer o
+        // mantenerse sin que llegue el broadcast, mientras que los perfiles
+        // (A2DP/manos libres) sí notifican. Se escucha todo y se decide por el
+        // estado real, no por el evento concreto que llegó.
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(ACTION_A2DP_STATE)
+            addAction(ACTION_HEADSET_STATE)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED)
         }
         receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
@@ -155,11 +236,11 @@ class BtAutoService : Service() {
                     intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                 }
                 val target = deviceAddress() ?: return
-                if (device?.address != target) return
-                when (intent.action) {
-                    BluetoothDevice.ACTION_ACL_CONNECTED -> onDeviceConnected()
-                    BluetoothDevice.ACTION_ACL_DISCONNECTED -> onDeviceDisconnected()
-                }
+                // Los eventos del adaptador (BT apagado) no traen dispositivo.
+                if (device != null && device.address != target) return
+
+                log("evento BT: ${intent.action?.substringAfterLast('.')} (${device?.address ?: "adaptador"})")
+                syncWithConnectionState()
             }
         }
         // Broadcasts del sistema: NOT_EXPORTED es lo correcto (el sistema está
@@ -182,25 +263,83 @@ class BtAutoService : Service() {
         }
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
             ?: return false
-        return try {
-            val device = adapter.bondedDevices.firstOrNull { it.address == target } ?: return false
+        val device = try {
+            adapter.bondedDevices.firstOrNull { it.address == target }
+        } catch (e: Exception) {
+            null
+        } ?: return false
+
+        // isConnected() (oculto) mira el enlace ACL. Si el ACL cayó pero algún
+        // perfil sigue activo —o al revés— cualquiera de los dos cuenta como
+        // "el carro sigue conectado".
+        val aclConnected = try {
             device.javaClass.getMethod("isConnected").invoke(device) as? Boolean ?: false
+        } catch (e: Exception) {
+            false
+        }
+        if (aclConnected) return true
+        // Ojo: getProfileConnectionState() es del adaptador entero (un reloj
+        // conectado lo daría por bueno). Hay que mirar los dispositivos
+        // conectados de cada perfil y buscar el nuestro.
+        return try {
+            listOfNotNull(a2dpProxy, headsetProxy).any { proxy ->
+                proxy.connectedDevices.any { it.address == target }
+            }
         } catch (e: Exception) {
             false
         }
     }
 
+    /// Proxies de perfil para saber, por dispositivo, si el carro sigue
+    /// conectado aunque el enlace ACL no lo refleje.
+    private fun bindProfileProxies() {
+        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter ?: return
+        val listener = object : BluetoothProfile.ServiceListener {
+            override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+                when (profile) {
+                    BluetoothProfile.A2DP -> a2dpProxy = proxy
+                    BluetoothProfile.HEADSET -> headsetProxy = proxy
+                }
+                syncWithConnectionState()
+            }
+
+            override fun onServiceDisconnected(profile: Int) {
+                when (profile) {
+                    BluetoothProfile.A2DP -> a2dpProxy = null
+                    BluetoothProfile.HEADSET -> headsetProxy = null
+                }
+            }
+        }
+        runCatching { adapter.getProfileProxy(this, listener, BluetoothProfile.A2DP) }
+        runCatching { adapter.getProfileProxy(this, listener, BluetoothProfile.HEADSET) }
+    }
+
+    private fun closeProfileProxies() {
+        val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter ?: return
+        a2dpProxy?.let { runCatching { adapter.closeProfileProxy(BluetoothProfile.A2DP, it) } }
+        headsetProxy?.let { runCatching { adapter.closeProfileProxy(BluetoothProfile.HEADSET, it) } }
+        a2dpProxy = null
+        headsetProxy = null
+    }
+
     private fun onDeviceConnected() {
         cancelFinalizeAlarm()
         if (tracking) {
-            if (paused) resumeTracking()
+            if (paused) resumeTracking() else log("ya había una ruta en curso, nada que hacer")
             return
         }
         startTracking()
     }
 
     private fun onDeviceDisconnected() {
-        if (!tracking || paused) return
+        if (!tracking) {
+            log("desconexión sin ruta en curso, ignorada")
+            return
+        }
+        if (paused) {
+            log("desconexión repetida, ya estaba en espera")
+            return
+        }
         pauseTracking(System.currentTimeMillis())
     }
 
@@ -208,11 +347,18 @@ class BtAutoService : Service() {
 
     private fun startTracking() {
         if (!hasLocationPermission()) {
+            log("ERROR: no se puede arrancar la ruta, falta permiso de ubicación")
             updateNotification("Auto-ruta", "Falta permiso de ubicación")
             return
         }
+        log("ruta iniciada")
         tracking = true
         paused = false
+        state = "en ruta"
+        livePoints = 0
+        liveDistanceKm = 0.0
+        liveDisconnectedAt = 0L
+        liveStartedAt = startTimeMs
         routeId = UUID.randomUUID().toString()
         startTimeMs = System.currentTimeMillis()
         disconnectedAtMs = 0L
@@ -222,7 +368,11 @@ class BtAutoService : Service() {
         pointsSincePersist = 0
         startLocationUpdates()
         persistProgress()
-        updateNotification("Ruta en curso", "Registrando recorrido…")
+        updateNotification(
+            "Ruta en curso · ${deviceLabel()}",
+            "Conectado · registrando recorrido",
+            startTimeMs,
+        )
     }
 
     /**
@@ -232,20 +382,34 @@ class BtAutoService : Service() {
      */
     private fun pauseTracking(atMs: Long) {
         paused = true
+        state = "en espera"
         disconnectedAtMs = atMs
+        liveDisconnectedAt = atMs
         stopLocationUpdates()
         persistProgress()
         scheduleFinalizeAlarm(timeoutMs())
         val min = timeoutMs() / 60_000L
-        updateNotification("Ruta pausada", "Desconectado · se cerrará en $min min si no reconecta")
+        log("ruta en espera: ${points.length()} puntos, ${"%.2f".format(Locale.US, totalDistanceKm)} km · cierre en $min min")
+        updateNotification(
+            "Ruta en espera",
+            "Desconectado · se cerrará en $min min si no reconecta",
+            atMs,
+        )
     }
 
     private fun resumeTracking() {
         paused = false
+        state = "en ruta"
         disconnectedAtMs = 0L
+        liveDisconnectedAt = 0L
         startLocationUpdates()
         persistProgress()
-        updateNotification("Ruta en curso", String.format(Locale.US, "%.2f km", totalDistanceKm))
+        log("reconectado dentro de la ventana, ruta reanudada")
+        updateNotification(
+            "Ruta en curso · ${deviceLabel()}",
+            String.format(Locale.US, "Conectado · %.2f km", totalDistanceKm),
+            startTimeMs,
+        )
     }
 
     /**
@@ -263,6 +427,13 @@ class BtAutoService : Service() {
 
         val vId = vehicleId()
         // Solo guardar rutas con recorrido real y vehículo conocido.
+        if (vId == null) {
+            log("ruta DESCARTADA: no hay vehículo activo guardado")
+        } else if (points.length() < 2) {
+            log("ruta DESCARTADA: solo ${points.length()} punto(s) GPS (¿ubicación desactivada o sin señal?)")
+        } else if (totalDistanceKm <= 0.05) {
+            log("ruta DESCARTADA: distancia ${"%.3f".format(Locale.US, totalDistanceKm)} km, por debajo del mínimo")
+        }
         if (vId != null && points.length() >= 2 && totalDistanceKm > 0.05) {
             val durationSec = ((endTimeMs - startTimeMs) / 1000.0).coerceAtLeast(1.0)
             val avgSpeed = totalDistanceKm / durationSec * 3600.0
@@ -278,6 +449,7 @@ class BtAutoService : Service() {
                 put("average_speed", avgSpeed)
             }
             appendCapturedRoute(route)
+            log("ruta GUARDADA: ${"%.2f".format(Locale.US, totalDistanceKm)} km, ${points.length()} puntos · pendiente de subir")
         }
         clearProgress()
         routeId = null
@@ -285,13 +457,76 @@ class BtAutoService : Service() {
         totalDistanceKm = 0.0
         hasLast = false
         disconnectedAtMs = 0L
+        state = "esperando"
+        livePoints = 0
+        liveDistanceKm = 0.0
+        liveDisconnectedAt = 0L
+        liveStartedAt = 0L
         updateNotification("Auto-ruta activa", "Esperando conexión del dispositivo")
+    }
+
+    /**
+     * Reconcilia el estado de la ruta con la conexión real del dispositivo. Los
+     * broadcast ACL son la vía normal, pero se pierden si el servicio no estaba
+     * vivo cuando ocurrió el cambio; esto lo corrige.
+     */
+    private fun syncWithConnectionState() {
+        if (!isEnabled() || deviceAddress() == null) return
+        val connected = isTargetConnected()
+        if (connected != lastLoggedConnected) {
+            lastLoggedConnected = connected
+            log("estado real del dispositivo: ${if (connected) "conectado" else "desconectado"}")
+        }
+        if (connected && !tracking) {
+            log("el dispositivo ya estaba conectado, arrancando ruta")
+            startTracking()
+        } else if (connected && paused) {
+            resumeTracking()
+        } else if (!connected && tracking && !paused) {
+            log("el dispositivo ya no estaba conectado, pasando a espera")
+            pauseTracking(System.currentTimeMillis())
+        }
+    }
+
+    /**
+     * Repaso periódico por si se perdió algún broadcast ACL (proceso muerto en
+     * el momento de conectar/desconectar). Inexacto: solo es una red.
+     */
+    private fun scheduleReconcileAlarm() {
+        val am = getSystemService(AlarmManager::class.java) ?: return
+        val intent = Intent(this, BtAutoService::class.java).setAction(ACTION_CHECK)
+        val pi = PendingIntent.getService(
+            this,
+            RECONCILE_REQUEST,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        am.setInexactRepeating(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + RECONCILE_INTERVAL_MS,
+            RECONCILE_INTERVAL_MS,
+            pi,
+        )
+    }
+
+    private fun cancelReconcileAlarm() {
+        val intent = Intent(this, BtAutoService::class.java).setAction(ACTION_CHECK)
+        val pi = PendingIntent.getService(
+            this,
+            RECONCILE_REQUEST,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        getSystemService(AlarmManager::class.java)?.cancel(pi)
     }
 
     /** Cierra la ruta si ya venció el timeout (red de seguridad si la alarma no corrió). */
     private fun finalizeIfStale() {
         if (!tracking || !paused || disconnectedAtMs <= 0) return
-        if (System.currentTimeMillis() - disconnectedAtMs >= timeoutMs()) finalizeRoute()
+        if (System.currentTimeMillis() - disconnectedAtMs >= timeoutMs()) {
+            log("timeout vencido detectado al abrir la app, cerrando ruta")
+            finalizeRoute()
+        }
     }
 
     // ── Alarma de cierre ────────────────────────────────────────────────────────
@@ -307,6 +542,7 @@ class BtAutoService : Service() {
         val triggerAt = SystemClock.elapsedRealtime() + delayMs.coerceAtLeast(0)
         val pi = finalizePendingIntent()
         val exact = Build.VERSION.SDK_INT < Build.VERSION_CODES.S || am.canScheduleExactAlarms()
+        log("cierre programado en ${delayMs / 1000}s (alarma ${if (exact) "exacta" else "inexacta"})")
         try {
             if (exact) {
                 am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi)
@@ -332,7 +568,10 @@ class BtAutoService : Service() {
             PackageManager.PERMISSION_GRANTED
 
     private fun startLocationUpdates() {
-        if (!hasLocationPermission()) return
+        if (!hasLocationPermission()) {
+            log("ERROR: sin permiso de ubicación, no hay registro GPS")
+            return
+        }
         if (locationListener != null) return
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         locationManager = lm
@@ -343,12 +582,37 @@ class BtAutoService : Service() {
             override fun onProviderDisabled(provider: String) {}
         }
         locationListener = listener
-        try {
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 5f, listener, Looper.getMainLooper())
+        // GPS es el bueno para una ruta, pero si está apagado (o tarda en fijar)
+        // la red evita quedarse sin ningún punto.
+        val used = mutableListOf<String>()
+        for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
+            try {
+                if (!lm.isProviderEnabled(provider)) continue
+                lm.requestLocationUpdates(provider, 2000L, 5f, listener, Looper.getMainLooper())
+                used.add(provider)
+            } catch (e: SecurityException) {
+                log("ERROR al pedir ubicación ($provider): ${e.message}")
+            } catch (e: IllegalArgumentException) {
+                // Proveedor inexistente en este dispositivo.
             }
-        } catch (e: SecurityException) {
+        }
+        if (used.isEmpty()) {
             locationListener = null
+            log("ERROR: no hay proveedores de ubicación activos (¿ubicación del teléfono apagada?)")
+            return
+        }
+        log("registro de ubicación activo: ${used.joinToString(", ")}")
+        // El primer fix puede tardar minutos (o no llegar bajo techo). Sembrar
+        // con la última posición conocida evita que un trayecto corto se quede
+        // sin puntos y se descarte.
+        if (points.length() == 0) {
+            val last = used.asSequence()
+                .mapNotNull { p -> try { lm.getLastKnownLocation(p) } catch (e: SecurityException) { null } }
+                .maxByOrNull { it.time }
+            if (last != null && System.currentTimeMillis() - last.time < 5 * 60_000L) {
+                onNewLocation(last)
+                log("posición inicial tomada de la última conocida")
+            }
         }
     }
 
@@ -373,11 +637,23 @@ class BtAutoService : Service() {
             put("altitude", if (loc.hasAltitude()) loc.altitude else 0.0)
         }
         points.put(p)
+        livePoints = points.length()
+        liveDistanceKm = totalDistanceKm
+        state = "en ruta"
+        val now = System.currentTimeMillis()
+        if (now - lastConnectionCheckMs > CONNECTION_RECHECK_MS) {
+            lastConnectionCheckMs = now
+            syncWithConnectionState()
+        }
         if (++pointsSincePersist >= PERSIST_EVERY_POINTS) {
             pointsSincePersist = 0
             persistProgress()
         }
-        updateNotification("Ruta en curso", String.format(Locale.US, "%.2f km", totalDistanceKm))
+        updateNotification(
+            "Ruta en curso · ${deviceLabel()}",
+            String.format(Locale.US, "Conectado · %.2f km · %d puntos", totalDistanceKm, points.length()),
+            startTimeMs,
+        )
     }
 
     // ── Persistencia de la ruta en curso ────────────────────────────────────────
@@ -417,19 +693,35 @@ class BtAutoService : Service() {
         points = json.optJSONArray("points") ?: JSONArray()
         tracking = true
         pointsSincePersist = 0
+        livePoints = points.length()
+        liveDistanceKm = totalDistanceKm
+        liveStartedAt = startTimeMs
+        log("ruta en curso recuperada: ${points.length()} puntos, ${"%.2f".format(Locale.US, totalDistanceKm)} km, pausada=$paused")
 
         if (paused) {
+            state = "en espera"
+            liveDisconnectedAt = disconnectedAtMs
             val elapsed = System.currentTimeMillis() - disconnectedAtMs
-            if (disconnectedAtMs <= 0 || elapsed >= timeoutMs()) finalizeRoute()
-            else scheduleFinalizeAlarm(timeoutMs() - elapsed)
+            if (disconnectedAtMs <= 0 || elapsed >= timeoutMs()) {
+                log("el timeout ya había vencido, cerrando")
+                finalizeRoute()
+            } else {
+                scheduleFinalizeAlarm(timeoutMs() - elapsed)
+            }
             return
         }
         // Estábamos conectados cuando murió el proceso: si el dispositivo sigue
         // conectado se reanuda; si no, se cuenta como desconexión de ahora.
         if (isTargetConnected()) {
+            state = "en ruta"
             startLocationUpdates()
-            updateNotification("Ruta en curso", String.format(Locale.US, "%.2f km", totalDistanceKm))
+            updateNotification(
+                "Ruta en curso · ${deviceLabel()}",
+                String.format(Locale.US, "Conectado · %.2f km", totalDistanceKm),
+                startTimeMs,
+            )
         } else {
+            log("el dispositivo ya no está conectado, se cuenta como desconexión")
             pauseTracking(System.currentTimeMillis())
         }
     }
@@ -456,18 +748,43 @@ class BtAutoService : Service() {
         }
     }
 
-    private fun buildNotification(title: String, text: String): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
+    /// Al tocar la notificación se abre la app en Rutas, donde se ve la ruta
+    /// que se está registrando ahora mismo.
+    private fun contentIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java)
+            .setAction(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(MainActivity.EXTRA_OPEN_TAB, "routes")
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getActivity(this, 7703, intent, flags)
+    }
+
+    /**
+     * @param since instante desde el que contar el cronómetro (inicio de la
+     * ruta o de la espera); null deja la notificación sin contador.
+     */
+    private fun buildNotification(title: String, text: String, since: Long? = null): Notification {
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
+            .setContentIntent(contentIntent())
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+        if (since != null && since > 0) {
+            // El cronómetro lo pinta el sistema: se actualiza solo, sin que el
+            // servicio tenga que despertar cada segundo.
+            builder.setWhen(since).setShowWhen(true).setUsesChronometer(true)
+        } else {
+            builder.setShowWhen(false).setUsesChronometer(false)
+        }
+        return builder.build()
+    }
 
-    private fun updateNotification(title: String, text: String) {
+    private fun updateNotification(title: String, text: String, since: Long? = null) {
         getSystemService(NotificationManager::class.java)
-            .notify(NOTIF_ID, buildNotification(title, text))
+            .notify(NOTIF_ID, buildNotification(title, text, since))
     }
 
     // ── Utilidades ──────────────────────────────────────────────────────────────

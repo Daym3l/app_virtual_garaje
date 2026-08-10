@@ -1,6 +1,7 @@
 package com.daym3l.virtualgaraje
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.bluetooth.BluetoothDevice
@@ -8,8 +9,12 @@ import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.LocationManager
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.os.Bundle
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
@@ -17,12 +22,23 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    companion object {
+        /// Pestaña a abrir cuando la app se lanza desde la notificación de la
+        /// auto-ruta. Dart la consume al arrancar y al volver a primer plano.
+        const val EXTRA_OPEN_TAB = "open_tab"
+        @Volatile private var pendingTab: String? = null
+    }
+
     private val channelName = "virtualgaraje/bt_auto"
     private val btPermissionRequestCode = 4231
+    private val notifPermissionRequestCode = 4232
+    private val backgroundLocationRequestCode = 4233
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var pendingNotifPermissionResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        intent?.getStringExtra(EXTRA_OPEN_TAB)?.let { pendingTab = it }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 "maintenance_alerts",
@@ -36,18 +52,32 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(EXTRA_OPEN_TAB)?.let { pendingTab = it }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "ensurePermission" -> ensurePermission(result)
+                    "ensureNotificationPermission" -> ensureNotificationPermission(result)
                     "getBondedDevices" -> getBondedDevices(result)
                     "isConnected" -> isConnected(call.argument<String>("address"), result)
                     "startService" -> startBtService(result)
                     "stopService" -> stopBtService(result)
                     "drainCapturedRoutes" -> drainCapturedRoutes(result)
                     "checkPendingRoute" -> checkPendingRoute(result)
+                    "diagnostics" -> diagnostics(result)
+                    "requestBatteryExemption" -> requestBatteryExemption(result)
+                    "requestBackgroundLocation" -> requestBackgroundLocation(result)
+                    "clearEventLog" -> clearEventLog(result)
+                    "consumePendingTab" -> {
+                        result.success(pendingTab)
+                        pendingTab = null
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -74,17 +104,41 @@ class MainActivity : FlutterActivity() {
         )
     }
 
+    /// Sin POST_NOTIFICATIONS (Android 13+) el servicio corre pero su
+    /// notificación no se ve, y el usuario no sabe si está registrando.
+    private fun ensureNotificationPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            result.success(true)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        pendingNotifPermissionResult = result
+        ActivityCompat.requestPermissions(
+            this,
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+            notifPermissionRequestCode,
+        )
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        val granted = grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
         if (requestCode == btPermissionRequestCode) {
-            val granted = grantResults.isNotEmpty() &&
-                grantResults[0] == PackageManager.PERMISSION_GRANTED
             pendingPermissionResult?.success(granted)
             pendingPermissionResult = null
+        } else if (requestCode == notifPermissionRequestCode) {
+            pendingNotifPermissionResult?.success(granted)
+            pendingNotifPermissionResult = null
         }
     }
 
@@ -124,6 +178,128 @@ class MainActivity : FlutterActivity() {
         val raw = prefs.getString(BtAutoService.KEY_CAPTURED, "[]")
         prefs.edit().remove(BtAutoService.KEY_CAPTURED).apply()
         result.success(raw)
+    }
+
+    /// Estado del servicio + permisos del sistema + historial de eventos. La
+    /// auto-ruta se prueba conduciendo, sin acceso a logcat: el diagnóstico
+    /// tiene que verse dentro de la app.
+    private fun diagnostics(result: MethodChannel.Result) {
+        val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        val alarms = getSystemService(AlarmManager::class.java)
+        val nativePrefs = getSharedPreferences(BtAutoService.PREFS_NATIVE, Context.MODE_PRIVATE)
+        val captured = runCatching {
+            org.json.JSONArray(nativePrefs.getString(BtAutoService.KEY_CAPTURED, "[]")).length()
+        }.getOrDefault(0)
+
+        result.success(
+            mapOf(
+                "service_running" to BtAutoService.running,
+                "state" to BtAutoService.state,
+                "points" to BtAutoService.livePoints,
+                "distance_km" to BtAutoService.liveDistanceKm,
+                "disconnected_at" to BtAutoService.liveDisconnectedAt,
+                "started_at" to BtAutoService.liveStartedAt,
+                "captured_pending" to captured,
+                "has_progress" to (nativePrefs.getString(BtAutoService.KEY_PROGRESS, null) != null),
+                "device_connected" to isTargetConnectedNow(),
+                "perm_location" to (
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ),
+                "perm_location_background" to (
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+                        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ),
+                "perm_bluetooth" to hasBtConnectPermission(),
+                "perm_notifications" to (
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                        ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                        PackageManager.PERMISSION_GRANTED
+                    ),
+                "gps_enabled" to (lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) ?: false),
+                "battery_unrestricted" to isBatteryUnrestricted(),
+                "exact_alarms" to (
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarms?.canScheduleExactAlarms() == true
+                    ),
+                "events" to (nativePrefs.getString(BtAutoService.KEY_EVENTS, "[]") ?: "[]"),
+            ),
+        )
+    }
+
+    /// Sin ACCESS_BACKGROUND_LOCATION el sistema no deja arrancar un servicio
+    /// en primer plano de tipo "location" desde segundo plano, así que la
+    /// auto-ruta no se reanuda tras reiniciar el teléfono ni al actualizar.
+    /// Desde Android 11 el permiso solo se concede desde los ajustes.
+    private fun requestBackgroundLocation(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            result.success(true)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(true)
+            return
+        }
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+                backgroundLocationRequestCode,
+            )
+        } else {
+            runCatching {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.parse("package:$packageName")),
+                )
+            }
+        }
+        result.success(false)
+    }
+
+    private fun isBatteryUnrestricted(): Boolean {
+        val pm = getSystemService(PowerManager::class.java) ?: return true
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    /// Sin exención, muchos fabricantes matan el servicio con la pantalla
+    /// apagada y la ruta nunca se cierra ni se guarda.
+    private fun requestBatteryExemption(result: MethodChannel.Result) {
+        if (isBatteryUnrestricted()) {
+            result.success(true)
+            return
+        }
+        try {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.parse("package:$packageName")),
+            )
+        } catch (e: Exception) {
+            // Algunas ROMs no exponen el diálogo: abrir los ajustes generales.
+            runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        }
+        result.success(false)
+    }
+
+    private fun clearEventLog(result: MethodChannel.Result) {
+        getSharedPreferences(BtAutoService.PREFS_NATIVE, Context.MODE_PRIVATE)
+            .edit().remove(BtAutoService.KEY_EVENTS).apply()
+        result.success(null)
+    }
+
+    private fun isTargetConnectedNow(): Boolean {
+        if (!hasBtConnectPermission()) return false
+        val target = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            .getString("flutter.route_auto_device_address", null) ?: return false
+        val adapter = bluetoothAdapter() ?: return false
+        return try {
+            val device = adapter.bondedDevices.firstOrNull { it.address == target } ?: return false
+            device.javaClass.getMethod("isConnected").invoke(device) as? Boolean ?: false
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun bluetoothAdapter() =

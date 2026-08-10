@@ -6,7 +6,6 @@ import 'services/auth_service.dart';
 import 'services/fcm_service.dart';
 import 'services/route_service.dart';
 import 'services/route_auto_config.dart';
-import 'services/bt_auto_service.dart';
 import 'services/captured_routes_importer.dart';
 import 'theme/app_theme.dart';
 import 'screens/login_screen.dart';
@@ -73,12 +72,9 @@ class _AuthGateState extends State<_AuthGate> {
     () async {
       try { await CapturedRoutesImporter.importAndSync(); } catch (_) {}
       try { await RouteService.syncPending(); } catch (_) {}
-      try {
-        final config = await RouteAutoConfigService.load();
-        if (config.enabled && config.isConfigured) {
-          await BtAutoService.startService();
-        }
-      } catch (_) {}
+      // Aplica la config del usuario que acaba de entrar (la auto-ruta es por
+      // usuario) y arranca o detiene la vigilancia según corresponda.
+      try { await RouteAutoConfigService.applyForCurrentUser(); } catch (_) {}
     }();
   }
 
