@@ -19,7 +19,10 @@ class MileageLog {
         id: j['id'] as String,
         vehicleId: j['vehicle_id'] as String,
         mileage: (j['mileage'] as num).toDouble(),
-        date: DateTime.parse(j['date'] as String),
+        // Los registros manuales se guardan a mediodía UTC (día de calendario),
+        // pero los que crea una ruta llevan la hora real de fin: sin toLocal()
+        // esos salían con la fecha corrida.
+        date: DateTime.parse(j['date'] as String).toLocal(),
         notes: j['notes'] as String?,
       );
 }

@@ -18,8 +18,11 @@ class RouteScreen extends StatefulWidget {
     required this.vehicle,
     required this.onRegisterFab,
     required this.onVehicleUpdated,
+    required this.isAdmin,
   });
   final Vehicle vehicle;
+  /// El diagnóstico del servicio de auto-ruta solo se muestra a administradores.
+  final bool isAdmin;
   final void Function(VoidCallback) onRegisterFab;
   final Future<void> Function() onVehicleUpdated;
 
@@ -27,7 +30,7 @@ class RouteScreen extends StatefulWidget {
   State<RouteScreen> createState() => _RouteScreenState();
 }
 
-class _RouteScreenState extends State<RouteScreen> {
+class _RouteScreenState extends State<RouteScreen> with WidgetsBindingObserver {
   List<RouteRecord> _routes = [];
   bool _loading = true;
   bool _tracking = false;
@@ -35,13 +38,46 @@ class _RouteScreenState extends State<RouteScreen> {
   int _pendingCount = 0;
   String? _error;
   RouteAutoConfig _autoConfig = const RouteAutoConfig();
+  BtDiagnostics? _autoStatus;
+  Timer? _statusTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
     _loadAutoConfig();
+    _pollAutoStatus();
+    // Mientras la pantalla está abierta se refresca el estado del servicio para
+    // ver en vivo la ruta que se está registrando sola.
+    _statusTimer = Timer.periodic(const Duration(seconds: 5), (_) => _pollAutoStatus());
     widget.onRegisterFab(_startTracking);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _statusTimer?.cancel();
+    super.dispose();
+  }
+
+  /// La auto-ruta se cierra sola con la app en segundo plano: al volver hay que
+  /// releer, o la lista se queda con lo que había al abrir la pantalla.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
+
+  Future<void> _pollAutoStatus() async {
+    final status = await BtAutoService.diagnostics();
+    if (!mounted || status == null) return;
+    final wasActive = _autoStatus?.routeActive ?? false;
+    setState(() => _autoStatus = status);
+    // La ruta automática acaba de cerrarse (o hay capturas sin importar) con la
+    // pantalla abierta: se recarga para que aparezca sin tocar nada.
+    if ((wasActive && !status.routeActive) || status.capturedPending > 0) {
+      await _load();
+    }
   }
 
   @override
@@ -70,6 +106,7 @@ class _RouteScreenState extends State<RouteScreen> {
       builder: (_) => _AutoRouteSettingsSheet(
         vehicleId: widget.vehicle.id,
         initial: _autoConfig,
+        isAdmin: widget.isAdmin,
       ),
     );
     if (updated != null && mounted) setState(() => _autoConfig = updated);
@@ -161,6 +198,8 @@ class _RouteScreenState extends State<RouteScreen> {
           SliverToBoxAdapter(
             child: _AutoRouteCard(config: _autoConfig, onTap: _openAutoSettings),
           ),
+          if (_autoStatus?.routeActive == true)
+            SliverToBoxAdapter(child: _LiveAutoRouteCard(status: _autoStatus!)),
           if (_pendingCount > 0)
             SliverToBoxAdapter(
               child: _PendingBanner(count: _pendingCount, syncing: _syncing, onRetry: _retrySync),
@@ -846,9 +885,14 @@ class _AutoRouteCard extends StatelessWidget {
 // ── Auto-ruta: hoja de configuración ───────────────────────────────────────────
 
 class _AutoRouteSettingsSheet extends StatefulWidget {
-  const _AutoRouteSettingsSheet({required this.vehicleId, required this.initial});
+  const _AutoRouteSettingsSheet({
+    required this.vehicleId,
+    required this.initial,
+    required this.isAdmin,
+  });
   final String vehicleId;
   final RouteAutoConfig initial;
+  final bool isAdmin;
 
   @override
   State<_AutoRouteSettingsSheet> createState() => _AutoRouteSettingsSheetState();
@@ -863,6 +907,7 @@ class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
   bool _loadingDevices = false;
   bool _saving = false;
   String? _error;
+  BtDiagnostics? _diag;
 
   @override
   void initState() {
@@ -871,6 +916,27 @@ class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
     _deviceAddress = widget.initial.deviceAddress;
     _deviceName = widget.initial.deviceName;
     _timeout = widget.initial.disconnectTimeoutMin;
+    _loadDiagnostics();
+  }
+
+  Future<void> _loadDiagnostics() async {
+    final diag = await BtAutoService.diagnostics();
+    if (mounted) setState(() => _diag = diag);
+  }
+
+  Future<void> _requestBattery() async {
+    await BtAutoService.requestBatteryExemption();
+    await _loadDiagnostics();
+  }
+
+  Future<void> _requestBackgroundLocation() async {
+    await BtAutoService.requestBackgroundLocation();
+    await _loadDiagnostics();
+  }
+
+  Future<void> _clearLog() async {
+    await BtAutoService.clearEventLog();
+    await _loadDiagnostics();
   }
 
   Future<void> _loadDevices() async {
@@ -905,6 +971,7 @@ class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
     // ubicación. Pedimos el de primer plano aquí; el usuario debe conceder
     // "Permitir todo el tiempo" en ajustes para que funcione en segundo plano.
     if (_enabled) {
+      await BtAutoService.ensureNotificationPermission();
       final granted = await RouteService.requestPermission();
       if (!granted) {
         if (mounted) {
@@ -1100,6 +1167,22 @@ class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
               }).toList(),
             ),
 
+            const SizedBox(height: 20),
+            _AutoRouteRequirements(
+              diagnostics: _diag,
+              onRequestBattery: _requestBattery,
+              onRequestBackgroundLocation: _requestBackgroundLocation,
+            ),
+
+            if (widget.isAdmin) ...[
+              const SizedBox(height: 20),
+              _DiagnosticsPanel(
+                diagnostics: _diag,
+                onRefresh: _loadDiagnostics,
+                onClear: _clearLog,
+              ),
+            ],
+
             if (_error != null) ...[
               const SizedBox(height: 12),
               Text(_error!, style: GoogleFonts.inter(fontSize: 12, color: AppColors.danger)),
@@ -1127,6 +1210,295 @@ class _AutoRouteSettingsSheetState extends State<_AutoRouteSettingsSheet> {
       ),
     );
   }
+}
+
+// ── Auto-ruta: ruta en curso ───────────────────────────────────────────────────
+
+class _LiveAutoRouteCard extends StatelessWidget {
+  const _LiveAutoRouteCard({required this.status});
+  final BtDiagnostics status;
+
+  @override
+  Widget build(BuildContext context) {
+    final waiting = status.waitingReconnect;
+    final color = waiting ? AppColors.warning : AppColors.success;
+    final since = waiting ? status.disconnectedAt : status.startedAt;
+    final elapsed = since != null ? DateTime.now().difference(since) : Duration.zero;
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 10, height: 10,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              boxShadow: [BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 8)],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  waiting ? 'Auto-ruta en espera' : 'Auto-ruta en curso',
+                  style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  waiting
+                      ? 'Desconectado hace ${_fmt(elapsed)} · se cerrará si no reconecta'
+                      : 'Conectado hace ${_fmt(elapsed)} · ${status.points} puntos',
+                  style: GoogleFonts.inter(fontSize: 11, color: AppColors.textTertiary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '${status.distanceKm.toStringAsFixed(2)} km',
+            style: GoogleFonts.jetBrainsMono(fontSize: 14, fontWeight: FontWeight.w700, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _fmt(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes % 60;
+    if (h > 0) return '${h}h ${m}m';
+    if (m > 0) return '${m}m';
+    return '${d.inSeconds}s';
+  }
+}
+
+// ── Auto-ruta: requisitos del sistema ──────────────────────────────────────────
+
+/// Permisos sin los cuales la auto-ruta no funciona. A diferencia del
+/// diagnóstico, esto lo ve cualquier usuario: son acciones que solo puede
+/// hacer quien tiene el teléfono en la mano.
+class _AutoRouteRequirements extends StatelessWidget {
+  const _AutoRouteRequirements({
+    required this.diagnostics,
+    required this.onRequestBattery,
+    required this.onRequestBackgroundLocation,
+  });
+  final BtDiagnostics? diagnostics;
+  final Future<void> Function() onRequestBattery;
+  final Future<void> Function() onRequestBackgroundLocation;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = diagnostics;
+    if (d == null || (d.permLocationBackground && d.batteryUnrestricted)) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('PARA QUE FUNCIONE EN SEGUNDO PLANO',
+            style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+        const SizedBox(height: 8),
+        if (!d.permLocationBackground)
+          _Requirement(
+            label: 'Permitir ubicación todo el tiempo',
+            detail: 'En Ajustes → Permisos → Ubicación elige "Permitir todo el tiempo". Sin esto la ruta no se registra con la app cerrada.',
+            color: AppColors.danger,
+            onTap: onRequestBackgroundLocation,
+          ),
+        if (!d.batteryUnrestricted)
+          _Requirement(
+            label: 'Quitar restricción de batería',
+            detail: 'Sin esto el teléfono puede cerrar el registro con la pantalla apagada.',
+            color: AppColors.warning,
+            onTap: onRequestBattery,
+          ),
+      ],
+    );
+  }
+}
+
+class _Requirement extends StatelessWidget {
+  const _Requirement({
+    required this.label,
+    required this.detail,
+    required this.color,
+    required this.onTap,
+  });
+  final String label;
+  final String detail;
+  final Color color;
+  final Future<void> Function() onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: onTap,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.35)),
+              ),
+              child: Center(
+                child: Text(label,
+                    style: GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(detail,
+              style: GoogleFonts.inter(fontSize: 11, color: AppColors.textTertiary, height: 1.35)),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Auto-ruta: diagnóstico ─────────────────────────────────────────────────────
+
+class _DiagnosticsPanel extends StatelessWidget {
+  const _DiagnosticsPanel({
+    required this.diagnostics,
+    required this.onRefresh,
+    required this.onClear,
+  });
+  final BtDiagnostics? diagnostics;
+  final Future<void> Function() onRefresh;
+  final Future<void> Function() onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = diagnostics;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text('DIAGNÓSTICO', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+              const Spacer(),
+              GestureDetector(
+                onTap: onRefresh,
+                child: const Icon(Icons.refresh, size: 16, color: AppColors.accent),
+              ),
+              const SizedBox(width: 14),
+              GestureDetector(
+                onTap: onClear,
+                child: const Icon(Icons.delete_outline, size: 16, color: AppColors.textTertiary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (d == null)
+            Text('Sin datos del servicio', style: GoogleFonts.inter(fontSize: 12, color: AppColors.textTertiary))
+          else ...[
+            _flag('Servicio activo', d.serviceRunning),
+            _row('Estado', d.state),
+            if (d.serviceRunning && d.points > 0)
+              _row('Ruta actual', '${d.points} puntos · ${d.distanceKm.toStringAsFixed(2)} km'),
+            _flag('Dispositivo conectado', d.deviceConnected),
+            _flag('Permiso de ubicación', d.permLocation),
+            _flag('Ubicación en segundo plano', d.permLocationBackground),
+            _flag('Permiso de Bluetooth', d.permBluetooth),
+            _flag('Notificaciones', d.permNotifications),
+            _flag('GPS del teléfono', d.gpsEnabled),
+            _flag('Alarmas exactas', d.exactAlarms),
+            _flag('Batería sin restricción', d.batteryUnrestricted),
+            if (d.capturedPending > 0) _row('Rutas por importar', '${d.capturedPending}'),
+            if (d.hasProgress) _row('Ruta a medias guardada', 'sí'),
+            const SizedBox(height: 12),
+            Text('EVENTOS', style: GoogleFonts.jetBrainsMono(fontSize: 10, color: AppColors.textTertiary, letterSpacing: 0.8)),
+            const SizedBox(height: 6),
+            if (d.events.isEmpty)
+              Text('Sin eventos registrados', style: GoogleFonts.inter(fontSize: 12, color: AppColors.textTertiary))
+            else
+              Container(
+                constraints: const BoxConstraints(maxHeight: 220),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding: const EdgeInsets.all(10),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: d.events.map((e) {
+                      final error = e.message.startsWith('ERROR') || e.message.contains('DESCARTADA');
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          '${_hhmm(e.time)}  ${e.message}',
+                          style: GoogleFonts.jetBrainsMono(
+                            fontSize: 10,
+                            height: 1.4,
+                            color: error ? AppColors.danger : AppColors.textSecondary,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _hhmm(DateTime t) =>
+      '${t.day.toString().padLeft(2, '0')}/${t.month.toString().padLeft(2, '0')} '
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  Widget _row(String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Row(
+          children: [
+            Expanded(child: Text(label, style: GoogleFonts.inter(fontSize: 12, color: AppColors.textTertiary))),
+            Text(value, style: GoogleFonts.jetBrainsMono(fontSize: 11, color: AppColors.textSecondary)),
+          ],
+        ),
+      );
+
+  Widget _flag(String label, bool ok) => Padding(
+        padding: const EdgeInsets.only(bottom: 5),
+        child: Row(
+          children: [
+            Icon(ok ? Icons.check_circle_outline : Icons.cancel_outlined,
+                size: 14, color: ok ? AppColors.success : AppColors.danger),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label, style: GoogleFonts.inter(fontSize: 12, color: AppColors.textTertiary))),
+            Text(ok ? 'sí' : 'no',
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: ok ? AppColors.success : AppColors.danger,
+                )),
+          ],
+        ),
+      );
 }
 
 class _InfoRow extends StatelessWidget {

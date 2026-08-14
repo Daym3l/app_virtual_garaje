@@ -7,6 +7,7 @@ import '../models/vehicle.dart';
 import '../models/user_profile.dart';
 import '../services/auth_service.dart';
 import '../services/vehicle_service.dart';
+import '../services/bt_auto_service.dart';
 import '../services/fcm_service.dart';
 import '../services/profile_service.dart';
 import 'dashboard_screen.dart';
@@ -34,7 +35,7 @@ class ShellScreen extends StatefulWidget {
   State<ShellScreen> createState() => _ShellScreenState();
 }
 
-class _ShellScreenState extends State<ShellScreen> {
+class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
   int _tab = AppTab.home;
   List<Vehicle> _vehicles = [];
   Vehicle? _activeVehicle;
@@ -50,15 +51,33 @@ class _ShellScreenState extends State<ShellScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadVehicles();
     _loadProfile();
+    _consumePendingTab();
     _fcmSub = FcmService.navigateToMaintenance.stream.listen((_) {
       if (mounted) setState(() { _tab = AppTab.maintenance; _fabAction = null; });
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _consumePendingTab();
+  }
+
+  /// La notificación de la auto-ruta abre la app directamente en Rutas, donde
+  /// se ve la ruta que se está registrando.
+  Future<void> _consumePendingTab() async {
+    final tab = await BtAutoService.consumePendingTab();
+    if (!mounted || tab != 'routes') return;
+    // Sin comprobar la membresía: si no tiene acceso, la propia pestaña muestra
+    // la pantalla de upgrade (y aquí el perfil puede no haber cargado todavía).
+    setState(() { _tab = AppTab.routes; _fabAction = null; });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fcmSub?.cancel();
     super.dispose();
   }
@@ -70,6 +89,7 @@ class _ShellScreenState extends State<ShellScreen> {
 
   bool get _isPaidMember => _profile?.isPaidMember ?? false;
   bool get _canAccessRoutes => _profile?.canAccessRoutes ?? false;
+  bool get _isAdmin => _profile?.isAdmin ?? false;
 
   Future<void> _loadVehicles() async {
     try {
@@ -303,6 +323,7 @@ class _ShellScreenState extends State<ShellScreen> {
         if (!_canAccessRoutes) return const _UpgradeScreen();
         return RouteScreen(
           vehicle: _activeVehicle!,
+          isAdmin: _isAdmin,
           onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _fabAction = fn);
           }),

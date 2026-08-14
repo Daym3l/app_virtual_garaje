@@ -11,6 +11,10 @@
          carro para arrancar/detener la ruta automáticamente. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Sin exención de batería, varios fabricantes matan el servicio de
+         auto-ruta con la pantalla apagada. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <application
         android:label="Mi Garaje Virtual"
         android:name="${applicationName}"
@@ -49,6 +53,16 @@
             android:name=".BtAutoService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- Relanza la vigilancia tras reiniciar el teléfono o actualizar la app. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

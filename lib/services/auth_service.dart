@@ -2,6 +2,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/env.dart';
 import 'fcm_service.dart';
+import 'route_auto_config.dart';
 
 final _googleSignIn = GoogleSignIn(
   serverClientId: Env.googleServerClientId,
@@ -31,6 +32,9 @@ class AuthService {
 
   static Future<void> signOut() async {
     await FcmService().clearToken();
+    // La auto-ruta es por usuario: al salir se detiene para que no siga
+    // registrando rutas ni aparezca configurada en la siguiente sesión.
+    await RouteAutoConfigService.clearActive();
     await Future.wait([
       _googleSignIn.signOut(),
       _supabase.auth.signOut(),
