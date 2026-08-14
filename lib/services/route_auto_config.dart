@@ -165,8 +165,12 @@ class RouteAutoConfigService {
       await prefs.remove(_kName);
     }
     await prefs.setInt(_kTimeout, config.disconnectTimeoutMin);
+    // Se borra si el usuario no tiene vehículo activo: dejar el del anterior
+    // atribuiría sus rutas automáticas a un vehículo ajeno.
     if (config.activeVehicleId != null) {
       await prefs.setString(_kVehicle, config.activeVehicleId!);
+    } else {
+      await prefs.remove(_kVehicle);
     }
   }
 

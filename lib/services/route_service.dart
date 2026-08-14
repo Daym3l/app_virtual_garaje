@@ -93,8 +93,11 @@ class RouteRecord {
     return RouteRecord(
       id: j['id'] as String,
       vehicleId: j['vehicle_id'] as String,
-      startTime: DateTime.parse(j['start_time'] as String),
-      endTime: DateTime.parse(j['end_time'] as String),
+      // Supabase devuelve los timestamps en UTC: sin toLocal() la pantalla
+      // mostraría la hora UTC, y una ruta de la tarde saldría con la fecha del
+      // día siguiente.
+      startTime: DateTime.parse(j['start_time'] as String).toLocal(),
+      endTime: DateTime.parse(j['end_time'] as String).toLocal(),
       points: pts,
       totalDistance: _toDouble(j['total_distance']),
       averageSpeed: _toDouble(j['average_speed']),

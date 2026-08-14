@@ -89,6 +89,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
 
   bool get _isPaidMember => _profile?.isPaidMember ?? false;
   bool get _canAccessRoutes => _profile?.canAccessRoutes ?? false;
+  bool get _isAdmin => _profile?.isAdmin ?? false;
 
   Future<void> _loadVehicles() async {
     try {
@@ -322,6 +323,7 @@ class _ShellScreenState extends State<ShellScreen> with WidgetsBindingObserver {
         if (!_canAccessRoutes) return const _UpgradeScreen();
         return RouteScreen(
           vehicle: _activeVehicle!,
+          isAdmin: _isAdmin,
           onRegisterFab: (fn) => WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) setState(() => _fabAction = fn);
           }),

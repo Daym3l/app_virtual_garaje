@@ -71,6 +71,12 @@ class BtAutoService : Service() {
         // despertar el teléfono (se ejecuta cuando ya está despierto).
         private const val RECONCILE_INTERVAL_MS = 2 * 60_000L
         private const val CONNECTION_RECHECK_MS = 15_000L
+        /// Los fixes de red tienen cientos de metros (o km) de error: mezclarlos
+        /// con los de GPS inflaba la distancia. Solo valen puntos finos.
+        private const val MAX_ACCURACY_M = 50f
+        /// Salto entre puntos que ningún carro haría: es error de posición.
+        private const val MAX_SPEED_KMH = 200.0
+        private const val MIN_SEGMENT_KM = 0.005
         private const val ACTION_A2DP_STATE = "android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED"
         private const val ACTION_HEADSET_STATE = "android.bluetooth.headset.profile.action.CONNECTION_STATE_CHANGED"
         private const val PERSIST_EVERY_POINTS = 5
@@ -120,6 +126,9 @@ class BtAutoService : Service() {
     private var hasLast = false
     private var pointsSincePersist = 0
     private var lastConnectionCheckMs = 0L
+    private var lastFixTimeMs = 0L
+    private var networkListening = false
+    private var networkOnlyFallbackUsed = false
     private var lastLoggedConnected: Boolean? = null
     private var a2dpProxy: BluetoothProfile? = null
     private var headsetProxy: BluetoothProfile? = null
@@ -582,52 +591,98 @@ class BtAutoService : Service() {
             override fun onProviderDisabled(provider: String) {}
         }
         locationListener = listener
-        // GPS es el bueno para una ruta, pero si está apagado (o tarda en fijar)
-        // la red evita quedarse sin ningún punto.
-        val used = mutableListOf<String>()
-        for (provider in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
-            try {
-                if (!lm.isProviderEnabled(provider)) continue
-                lm.requestLocationUpdates(provider, 2000L, 5f, listener, Looper.getMainLooper())
-                used.add(provider)
-            } catch (e: SecurityException) {
-                log("ERROR al pedir ubicación ($provider): ${e.message}")
-            } catch (e: IllegalArgumentException) {
-                // Proveedor inexistente en este dispositivo.
-            }
-        }
-        if (used.isEmpty()) {
+        val gpsOk = requestProvider(lm, listener, LocationManager.GPS_PROVIDER)
+        // La red solo es un puente hasta que el GPS fije: sus fixes tienen
+        // cientos de metros de error y no sirven para medir el recorrido.
+        networkOnlyFallbackUsed = requestProvider(lm, listener, LocationManager.NETWORK_PROVIDER)
+        networkListening = networkOnlyFallbackUsed
+
+        if (!gpsOk && !networkListening) {
             locationListener = null
             log("ERROR: no hay proveedores de ubicación activos (¿ubicación del teléfono apagada?)")
             return
         }
-        log("registro de ubicación activo: ${used.joinToString(", ")}")
-        // El primer fix puede tardar minutos (o no llegar bajo techo). Sembrar
-        // con la última posición conocida evita que un trayecto corto se quede
-        // sin puntos y se descarte.
+        log("registro de ubicación activo: ${if (gpsOk) "gps" else ""}${if (gpsOk && networkListening) " + " else ""}${if (networkListening) "red (provisional)" else ""}")
+
+        // El primer fix de GPS puede tardar minutos. Sembrar con la última
+        // posición conocida evita que un trayecto corto se quede sin puntos,
+        // pero solo si es reciente y fina: una vieja falsearía la distancia.
         if (points.length() == 0) {
-            val last = used.asSequence()
-                .mapNotNull { p -> try { lm.getLastKnownLocation(p) } catch (e: SecurityException) { null } }
-                .maxByOrNull { it.time }
-            if (last != null && System.currentTimeMillis() - last.time < 5 * 60_000L) {
+            val last = try {
+                lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            } catch (e: SecurityException) {
+                null
+            }
+            if (last != null &&
+                System.currentTimeMillis() - last.time < 2 * 60_000L &&
+                (!last.hasAccuracy() || last.accuracy <= MAX_ACCURACY_M)
+            ) {
                 onNewLocation(last)
                 log("posición inicial tomada de la última conocida")
             }
         }
     }
 
+    private fun requestProvider(lm: LocationManager, listener: LocationListener, provider: String): Boolean =
+        try {
+            if (lm.isProviderEnabled(provider)) {
+                lm.requestLocationUpdates(provider, 2000L, 5f, listener, Looper.getMainLooper())
+                true
+            } else {
+                false
+            }
+        } catch (e: SecurityException) {
+            log("ERROR al pedir ubicación ($provider): ${e.message}")
+            false
+        } catch (e: IllegalArgumentException) {
+            false
+        }
+
+    /// En cuanto el GPS entrega un fix la red sobra: se corta para que sus
+    /// puntos gruesos no entren en el cálculo de distancia.
+    private fun stopNetworkUpdates() {
+        networkListening = false
+        val lm = locationManager ?: return
+        val listener = locationListener ?: return
+        // removeUpdates() no distingue proveedor: se rehace el registro solo
+        // con GPS.
+        runCatching { lm.removeUpdates(listener) }
+        requestProvider(lm, listener, LocationManager.GPS_PROVIDER)
+        log("GPS fijado, se deja de usar la ubicación por red")
+    }
+
     private fun stopLocationUpdates() {
         locationListener?.let { l -> runCatching { locationManager?.removeUpdates(l) } }
         locationListener = null
+        networkListening = false
+        networkOnlyFallbackUsed = false
     }
 
     private fun onNewLocation(loc: Location) {
         if (!tracking || paused) return
+
+        // Un fix impreciso (red, GPS sin fijar) mueve la posición cientos de
+        // metros sin que el carro se mueva: cuenta como recorrido y dispara la
+        // distancia. Mejor perder el punto que inventar kilómetros.
+        if (loc.hasAccuracy() && loc.accuracy > MAX_ACCURACY_M) return
+        // En cuanto hay GPS se deja de escuchar la red, que solo servía para
+        // no quedarse sin ningún punto al principio.
+        if (loc.provider == LocationManager.GPS_PROVIDER && networkListening) stopNetworkUpdates()
+        if (networkOnlyFallbackUsed && loc.provider != LocationManager.GPS_PROVIDER && hasLast) return
+
         if (hasLast) {
-            totalDistanceKm += haversineKm(lastLat, lastLng, loc.latitude, loc.longitude)
+            val segmentKm = haversineKm(lastLat, lastLng, loc.latitude, loc.longitude)
+            val dtHours = ((loc.time - lastFixTimeMs).coerceAtLeast(1L)) / 3_600_000.0
+            val impliedKmh = segmentKm / dtHours
+            if (impliedKmh > MAX_SPEED_KMH) {
+                log("punto descartado: salto de ${"%.2f".format(Locale.US, segmentKm)} km (${impliedKmh.toInt()} km/h)")
+                return
+            }
+            if (segmentKm >= MIN_SEGMENT_KM) totalDistanceKm += segmentKm
         }
         lastLat = loc.latitude
         lastLng = loc.longitude
+        lastFixTimeMs = loc.time
         hasLast = true
         val p = JSONObject().apply {
             put("latitude", loc.latitude)
