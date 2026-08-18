@@ -112,21 +112,21 @@ class MaintenanceRecord {
         type: j['type'] as String,
         description: j['description'] as String? ?? '',
         serviceCategory: j['service_category'] as String? ?? 'general',
-        date: DateTime.parse(j['date'] as String),
+        date: DateTime.parse(j['date'] as String).toLocal(),
         mileage: (j['mileage'] as num?)?.toDouble() ?? 0,
         cost: (j['cost'] as num?)?.toDouble() ?? 0,
         isCompleted: j['is_completed'] as bool? ?? false,
         isUrgent: j['is_urgent'] as bool? ?? false,
         nextMileage: (j['next_mileage'] as num?)?.toDouble(),
         nextDate: j['next_date'] != null
-            ? DateTime.parse(j['next_date'] as String)
+            ? DateTime.parse(j['next_date'] as String).toLocal()
             : null,
         intervalKm: (j['interval_km'] as num?)?.toDouble(),
         intervalDays: (j['interval_days'] as num?)?.toInt(),
         performedBy: j['performed_by'] as String?,
         parts: j['parts'] as String?,
         warrantyUntil: j['warranty_until'] != null
-            ? DateTime.parse(j['warranty_until'] as String)
+            ? DateTime.parse(j['warranty_until'] as String).toLocal()
             : null,
         items: normalizeItems(j['items'], j['type'] as String),
         partsList: normalizeParts(j['parts_list']),

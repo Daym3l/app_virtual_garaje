@@ -145,7 +145,7 @@ class DashboardService {
     double? lastFuelCost;
     if (lastLog.isNotEmpty) {
       final l = lastLog.first as Map<String, dynamic>;
-      lastFuelDate = DateTime.tryParse(l['date']?.toString() ?? '');
+      lastFuelDate = DateTime.tryParse(l['date']?.toString() ?? '')?.toLocal();
       if (isElectric) {
         lastFuelLiters = (l['energy_added'] as num?)?.toDouble();
       } else {
@@ -207,7 +207,7 @@ class DashboardService {
 
     for (final raw in rows) {
       final m = raw as Map<String, dynamic>;
-      final until = DateTime.tryParse(m['warranty_until']?.toString() ?? '');
+      final until = DateTime.tryParse(m['warranty_until']?.toString() ?? '')?.toLocal();
       if (until == null) continue;
       final target = DateTime(until.year, until.month, until.day);
       final daysLeft = target.difference(today).inDays;
@@ -253,7 +253,7 @@ class DashboardService {
       final type = _translateType(rawType);
       final isUrgent = (m['is_urgent'] as bool?) ?? false;
       final nextMileage = (m['next_mileage'] as num?)?.toDouble();
-      final nextDate = DateTime.tryParse(m['next_date']?.toString() ?? '');
+      final nextDate = DateTime.tryParse(m['next_date']?.toString() ?? '')?.toLocal();
 
       // Relevance filter
       final kmLeft = nextMileage != null ? nextMileage - currentMileage : null;

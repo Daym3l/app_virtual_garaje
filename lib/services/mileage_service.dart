@@ -35,6 +35,10 @@ class MileageService {
         .from('mileage_logs')
         .select()
         .eq('vehicle_id', vehicleId)
+        // Todos los registros se guardan a mediodía UTC (día de calendario), así
+        // que dentro de un mismo día ordena el propio odómetro: solo avanza, y
+        // es lo único fiable aquí (created_at va vacío en las filas que inserta
+        // la app). Deja las diferencias entre registros siempre positivas.
         .order('date', ascending: false)
         .order('mileage', ascending: false)
         .limit(50);
