@@ -140,12 +140,21 @@ COMMIT;
 -- Paso 6 — Verificar
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Ninguna fila debería salir aquí: todas las fechas a mediodía UTC y sin decimales.
-SELECT id, vehicle_id, date, mileage, notes
-FROM mileage_logs
-WHERE date::time <> time '12:00'
-   OR mileage <> round(mileage)
-ORDER BY vehicle_id, date;
+-- Solo los registros de rutas deberían estar a mediodía UTC: los manuales y los
+-- de la web conservan su propia convención hasta que se ejecute
+-- 20260818_normalize_all_mileage_log_dates.sql, que unifica la tabla entera.
+SELECT ml.id, ml.vehicle_id, ml.date, ml.mileage, ml.notes
+FROM mileage_logs ml
+WHERE (
+    EXISTS (SELECT 1 FROM routes r WHERE r.id = ml.id)
+    OR ml.notes LIKE 'Ruta #%'
+    OR ml.notes LIKE 'Ruta automática%'
+  )
+  AND (
+    (ml.date AT TIME ZONE 'UTC')::time <> time '12:00'
+    OR ml.mileage <> round(ml.mileage)
+  )
+ORDER BY ml.vehicle_id, ml.date;
 
 -- Orden final tal como lo lee la app (fecha desc, luego orden de creación).
 -- Sin filtro por vehículo, para poder ejecutar el script de una sola pasada.
