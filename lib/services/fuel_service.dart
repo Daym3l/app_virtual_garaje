@@ -28,7 +28,7 @@ class FuelLog {
   factory FuelLog.fromJson(Map<String, dynamic> j) => FuelLog(
         id: j['id'] as String,
         vehicleId: j['vehicle_id'] as String,
-        date: DateTime.parse(j['date'] as String),
+        date: DateTime.parse(j['date'] as String).toLocal(),
         liters: (j['liters'] as num).toDouble(),
         cost: (j['cost'] as num).toDouble(),
         mileage: (j['mileage'] as num).toDouble(),
@@ -65,7 +65,7 @@ class EnergyLog {
   factory EnergyLog.fromJson(Map<String, dynamic> j) => EnergyLog(
         id: j['id'] as String,
         vehicleId: j['vehicle_id'] as String,
-        date: DateTime.parse(j['date'] as String),
+        date: DateTime.parse(j['date'] as String).toLocal(),
         odometer: (j['odometer'] as num).toDouble(),
         initialLevel: (j['initial_level'] as num).toDouble(),
         finalLevel: (j['final_level'] as num).toDouble(),

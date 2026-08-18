@@ -201,6 +201,27 @@ finaliza. Funciona con la app en segundo plano/cerrada.
   segundo plano ("Permitir todo el tiempo") y notificaciones no son simulables.
   Sin reinicio automático tras reboot (se reanuda al abrir la app).
 
+## Convención de fechas (app y web comparten base de datos)
+
+**Una fecha de calendario se ancla siempre a mediodía, nunca a medianoche.**
+Mediodía está a 12 h de las dos medianoches, así que ninguna zona horaria real
+puede correr el día al convertir en cualquiera de los dos sentidos.
+
+| Familia | Columnas | Se guarda | Se lee |
+|---|---|---|---|
+| Día en `timestamptz` | `mileage_logs.date`, `fuel_logs.date`, `maintenances.date` | `DateTime.utc(y, m, d, 12)` | `DateTime.parse(...).toLocal()` |
+| Día en `date` | `energy_logs.date`, `maintenances.next_date`, `maintenances.warranty_until` | `'YYYY-MM-DD'` (`toIso8601String().split('T').first`) | `DateTime.parse(...)` — Dart ya lo interpreta como medianoche local |
+| Instante real | `routes.start_time`, `routes.end_time`, `points[].timestamp` | `toUtc().toIso8601String()` | `DateTime.parse(...).toLocal()` |
+
+La web usa la misma regla: escribe `new Date(dia + 'T12:00:00Z')` y lee todo por
+`toCalendarDate()` (`lib/utils/formatters.ts`), que ancla a mediodía las cadenas
+de solo-día. En JavaScript `new Date('2026-08-15')` es medianoche **UTC**, que en
+UTC-4 cae el día 14: nunca parsear una fecha de solo-día sin anclarla.
+
+Ordenar por fecha no basta: al ser día de calendario, varios registros comparten
+fecha. En `mileage_logs` desempata el odómetro, que solo avanza (`created_at` va
+vacío en las filas insertadas antes de agosto de 2026).
+
 ## Convenciones de código
 
 - Idioma UI: **español**

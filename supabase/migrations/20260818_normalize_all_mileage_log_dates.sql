@@ -1,17 +1,22 @@
--- Unifica la fecha de TODOS los registros de kilometraje a mediodía UTC.
+-- Unifica las fechas de calendario a MEDIODÍA UTC en las tres tablas que las
+-- guardan como timestamptz: mileage_logs, fuel_logs y maintenances.
 --
--- Continuación de 20260817_normalize_route_mileage_logs.sql, que solo tocó los
--- registros creados por rutas. Quedaron tres convenciones distintas conviviendo:
+-- Convención única (documentada en CLAUDE.md de la app y de la web):
 --
---   00:00:00+00  selector de fecha antiguo (solo día). En UTC-4 esa medianoche
---                es las 20:00 del día anterior: al mostrarse en hora local el
---                registro se corre un día.
---   16:00:00+00  la web: mediodía local (12:00 en UTC-4).
---   hora real    entradas antiguas de la app y de rutas previas al arreglo.
---   12:00:00+00  convención actual de la app.
+--   Una fecha de calendario se ancla siempre a mediodía, nunca a medianoche.
+--   · timestamptz de día  → el día a las 12:00 UTC
+--   · columnas `date`     → texto 'YYYY-MM-DD' (sin hora, no se tocan aquí)
+--   · instantes reales    → tal cual (routes.start_time/end_time)
 --
--- Todas pasan a mediodía UTC, que es día de calendario en cualquier zona
--- razonable y deja el orden dentro del día en manos del odómetro.
+-- Mediodía está a 12 horas de las dos medianoches, así que ninguna zona
+-- horaria real puede correr el día al convertir en cualquiera de los dos
+-- sentidos. Eso es lo que fallaba: convivían tres convenciones.
+--
+--   00:00:00+00  selector de solo-día antiguo. En UTC-4 esa medianoche es las
+--                20:00 del día anterior: el registro se muestra corrido.
+--   16:00:00+00  la web, que usaba mediodía LOCAL.
+--   hora real    entradas antiguas de la app y rutas previas al arreglo.
+--   12:00:00+00  convención correcta.
 --
 -- Día de destino:
 --   · si la hora es exactamente 00:00 UTC, el día es el de la propia fecha UTC
@@ -25,123 +30,106 @@
 -- Paso 1 — Ver qué se va a cambiar (no modifica nada)
 -- ─────────────────────────────────────────────────────────────────────────────
 
-WITH objetivo AS (
-  SELECT
-    ml.id,
-    ml.vehicle_id,
-    ml.date AS fecha_actual,
+CREATE OR REPLACE FUNCTION dia_a_mediodia_utc(ts timestamptz)
+RETURNS timestamptz
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT (
     (
-      (
-        CASE
-          WHEN (ml.date AT TIME ZONE 'UTC')::time = time '00:00'
-            THEN (ml.date AT TIME ZONE 'UTC')::date
-          ELSE (ml.date AT TIME ZONE 'America/Havana')::date
-        END
-      ) + time '12:00'
-    ) AT TIME ZONE 'UTC' AS fecha_nueva,
-    ml.mileage AS km_actual,
-    round(ml.mileage) AS km_nuevo,
-    ml.notes
-  FROM mileage_logs ml
-)
+      CASE
+        WHEN (ts AT TIME ZONE 'UTC')::time = time '00:00'
+          THEN (ts AT TIME ZONE 'UTC')::date
+        ELSE (ts AT TIME ZONE 'America/Havana')::date
+      END
+    ) + time '12:00'
+  ) AT TIME ZONE 'UTC';
+$$;
+
+SELECT 'mileage_logs' AS tabla, count(*) AS filas_a_cambiar,
+       count(*) FILTER (WHERE date::date <> dia_a_mediodia_utc(date)::date) AS cambian_de_dia
+FROM mileage_logs
+WHERE date <> dia_a_mediodia_utc(date) OR mileage <> round(mileage)
+UNION ALL
+SELECT 'fuel_logs', count(*),
+       count(*) FILTER (WHERE date::date <> dia_a_mediodia_utc(date)::date)
+FROM fuel_logs
+WHERE date <> dia_a_mediodia_utc(date)
+UNION ALL
+SELECT 'maintenances', count(*),
+       count(*) FILTER (WHERE date::date <> dia_a_mediodia_utc(date)::date)
+FROM maintenances
+WHERE date <> dia_a_mediodia_utc(date);
+
+-- Detalle de mileage_logs.
 SELECT
-  fecha_actual,
-  fecha_nueva,
-  fecha_actual::date <> fecha_nueva::date AS cambia_de_dia,
-  km_actual,
-  km_nuevo,
-  notes,
-  vehicle_id,
-  id
-FROM objetivo
-WHERE fecha_actual <> fecha_nueva
-   OR km_actual <> km_nuevo
-ORDER BY vehicle_id, fecha_actual;
-
--- Cuántas filas cambian de día (las de medianoche UTC, que hoy se muestran
--- corridas). Debería coincidir con las que están a 00:00:00+00.
-WITH objetivo AS (
-  SELECT
-    ml.date AS fecha_actual,
-    (
-      (
-        CASE
-          WHEN (ml.date AT TIME ZONE 'UTC')::time = time '00:00'
-            THEN (ml.date AT TIME ZONE 'UTC')::date
-          ELSE (ml.date AT TIME ZONE 'America/Havana')::date
-        END
-      ) + time '12:00'
-    ) AT TIME ZONE 'UTC' AS fecha_nueva
-  FROM mileage_logs ml
-)
-SELECT count(*) AS cambian_de_dia
-FROM objetivo
-WHERE fecha_actual::date <> fecha_nueva::date;
+  date                     AS fecha_actual,
+  dia_a_mediodia_utc(date) AS fecha_nueva,
+  date::date <> dia_a_mediodia_utc(date)::date AS cambia_de_dia,
+  mileage                  AS km_actual,
+  round(mileage)           AS km_nuevo,
+  notes, vehicle_id, id
+FROM mileage_logs
+WHERE date <> dia_a_mediodia_utc(date) OR mileage <> round(mileage)
+ORDER BY vehicle_id, date;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Paso 2 — Copia de seguridad completa de la tabla
+-- Paso 2 — Copias de seguridad
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE TABLE IF NOT EXISTS mileage_logs_backup_20260818 AS
-SELECT * FROM mileage_logs;
+CREATE TABLE IF NOT EXISTS mileage_logs_backup_20260818 AS SELECT * FROM mileage_logs;
+CREATE TABLE IF NOT EXISTS fuel_logs_backup_20260818    AS SELECT * FROM fuel_logs;
+CREATE TABLE IF NOT EXISTS maintenances_backup_20260818 AS SELECT * FROM maintenances;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Paso 3 — Normalizar fecha y redondear el odómetro
+-- Paso 3 — Normalizar
+--
+-- El odómetro se redondea solo en mileage_logs. En fuel_logs y maintenances la
+-- columna `mileage` se deja intacta: ahí el valor lo escribe el usuario y no
+-- alimenta el odómetro del vehículo.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 BEGIN;
 
-UPDATE mileage_logs ml
-SET
-  date = (
-    (
-      CASE
-        WHEN (ml.date AT TIME ZONE 'UTC')::time = time '00:00'
-          THEN (ml.date AT TIME ZONE 'UTC')::date
-        ELSE (ml.date AT TIME ZONE 'America/Havana')::date
-      END
-    ) + time '12:00'
-  ) AT TIME ZONE 'UTC',
-  mileage = round(ml.mileage)
-WHERE ml.date <> (
-    (
-      CASE
-        WHEN (ml.date AT TIME ZONE 'UTC')::time = time '00:00'
-          THEN (ml.date AT TIME ZONE 'UTC')::date
-        ELSE (ml.date AT TIME ZONE 'America/Havana')::date
-      END
-    ) + time '12:00'
-  ) AT TIME ZONE 'UTC'
-  OR ml.mileage <> round(ml.mileage);
+UPDATE mileage_logs
+SET date = dia_a_mediodia_utc(date),
+    mileage = round(mileage)
+WHERE date <> dia_a_mediodia_utc(date) OR mileage <> round(mileage);
 
--- Revisar el número de filas afectadas antes de confirmar.
+UPDATE fuel_logs
+SET date = dia_a_mediodia_utc(date)
+WHERE date <> dia_a_mediodia_utc(date);
+
+UPDATE maintenances
+SET date = dia_a_mediodia_utc(date)
+WHERE date <> dia_a_mediodia_utc(date);
+
+-- Revisar los conteos antes de confirmar.
 COMMIT;
--- ROLLBACK;  -- usar en su lugar si el conteo no cuadra
+-- ROLLBACK;  -- usar en su lugar si algo no cuadra
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Paso 4 — Verificar
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Ninguna fila debería salir: todas a mediodía UTC y sin decimales.
-SELECT id, vehicle_id, date, mileage, notes
-FROM mileage_logs
+-- Ninguna fila debería salir: todo a mediodía UTC.
+SELECT 'mileage_logs' AS tabla, id, date, mileage::text AS valor FROM mileage_logs
+WHERE (date AT TIME ZONE 'UTC')::time <> time '12:00' OR mileage <> round(mileage)
+UNION ALL
+SELECT 'fuel_logs', id, date, mileage::text FROM fuel_logs
 WHERE (date AT TIME ZONE 'UTC')::time <> time '12:00'
-   OR mileage <> round(mileage)
-ORDER BY vehicle_id, date;
+UNION ALL
+SELECT 'maintenances', id, date, mileage::text FROM maintenances
+WHERE (date AT TIME ZONE 'UTC')::time <> time '12:00';
 
--- Comparación día a día con el respaldo: solo deberían aparecer las filas que
--- estaban a medianoche UTC, y su día debe quedarse igual (no correrse).
-SELECT
-  b.date AS antes,
-  ml.date AS despues,
-  b.date::date  AS dia_antes_utc,
-  (ml.date AT TIME ZONE 'America/Havana')::date AS dia_despues_local,
-  ml.mileage,
-  ml.notes
-FROM mileage_logs ml
-JOIN mileage_logs_backup_20260818 b ON b.id = ml.id
-WHERE b.date <> ml.date
-ORDER BY ml.vehicle_id, ml.date;
+-- Ningún día debe haberse corrido respecto al respaldo. Solo deberían aparecer
+-- las filas que estaban a medianoche UTC, y con el mismo día que antes.
+SELECT b.date AS antes, m.date AS despues,
+       b.date::date AS dia_antes_utc,
+       (m.date AT TIME ZONE 'America/Havana')::date AS dia_despues_local,
+       m.notes
+FROM mileage_logs m
+JOIN mileage_logs_backup_20260818 b ON b.id = m.id
+WHERE b.date <> m.date
+ORDER BY m.vehicle_id, m.date;
 
 -- Orden tal como lo lee la app (fecha desc, luego odómetro desc).
 SELECT vehicle_id, date, mileage, notes
@@ -150,14 +138,44 @@ ORDER BY vehicle_id, date DESC, mileage DESC
 LIMIT 50;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- Deshacer (si hiciera falta)
+-- Paso 5 — created_at con valor por defecto (opcional)
+--
+-- La app no lo usa para ordenar (ordena por odómetro), pero deja registrada la
+-- hora real de inserción de aquí en adelante. Las filas viejas se rellenan por
+-- orden de odómetro dentro de cada día, el único orden fiable que queda.
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- UPDATE mileage_logs ml
--- SET date = b.date, mileage = b.mileage
--- FROM mileage_logs_backup_20260818 b
--- WHERE ml.id = b.id;
+BEGIN;
+
+ALTER TABLE mileage_logs ALTER COLUMN created_at SET DEFAULT now();
+
+WITH ordenados AS (
+  SELECT id, row_number() OVER (PARTITION BY vehicle_id, date ORDER BY mileage) AS orden
+  FROM mileage_logs
+  WHERE created_at IS NULL
+)
+UPDATE mileage_logs ml
+SET created_at = ml.date + (o.orden * interval '1 second')
+FROM ordenados o
+WHERE ml.id = o.id;
+
+COMMIT;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Limpieza
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Deshacer (si hiciera falta):
+-- UPDATE mileage_logs m SET date = b.date, mileage = b.mileage
+--   FROM mileage_logs_backup_20260818 b WHERE m.id = b.id;
+-- UPDATE fuel_logs f SET date = b.date
+--   FROM fuel_logs_backup_20260818 b WHERE f.id = b.id;
+-- UPDATE maintenances t SET date = b.date
+--   FROM maintenances_backup_20260818 b WHERE t.id = b.id;
 
 -- Cuando todo esté comprobado:
+-- DROP FUNCTION dia_a_mediodia_utc(timestamptz);
 -- DROP TABLE mileage_logs_backup_20260818;
+-- DROP TABLE fuel_logs_backup_20260818;
+-- DROP TABLE maintenances_backup_20260818;
 -- DROP TABLE mileage_logs_backup_20260817;
