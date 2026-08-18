@@ -235,12 +235,20 @@ class RouteService {
     if (logged != null) {
       newMileage = (logged['mileage'] as num).toDouble();
     } else {
-      newMileage = max(dbMileage, currentMileage) + totalDistance;
+      // Entero, igual que los registros manuales: el odómetro no lleva
+      // decimales y mezclarlos descuadraba las diferencias entre registros.
+      newMileage = (max(dbMileage, currentMileage) + totalDistance).roundToDouble();
+      // Día de calendario a mediodía UTC, la misma convención que los registros
+      // manuales. Con la hora real de fin, un registro manual del mismo día
+      // (guardado a las 12:00 UTC) quedaba por debajo de una ruta de la tarde
+      // aunque se hubiera creado después.
+      final localEnd = endTime.toLocal();
+      final logDate = DateTime.utc(localEnd.year, localEnd.month, localEnd.day, 12);
       await _db.from('mileage_logs').insert({
         'id': id,
         'vehicle_id': vehicleId,
         'mileage': newMileage,
-        'date': endTime.toUtc().toIso8601String(),
+        'date': logDate.toIso8601String(),
         'notes': routeNumber > 0
             ? 'Ruta #$routeNumber — ${totalDistance.toStringAsFixed(2)} km recorridos'
             : 'Ruta automática — ${totalDistance.toStringAsFixed(2)} km recorridos',
