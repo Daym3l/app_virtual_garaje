@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../utils/consumption.dart';
 
 class FuelLog {
   const FuelLog({
@@ -86,6 +87,24 @@ class FuelService {
         .order('date', ascending: false)
         .limit(50);
     return (data as List).map((j) => FuelLog.fromJson(j)).toList();
+  }
+
+  /// Consumo reciente sobre TODAS las cargas (no solo las listadas): mismo
+  /// número en el dashboard, en esta pantalla y en la web.
+  static Future<VehicleConsumption> fetchConsumption(String vehicleId) async {
+    final rows = await _db
+        .from('fuel_logs')
+        .select('date, mileage, liters, is_tank_full')
+        .eq('vehicle_id', vehicleId)
+        .gt('mileage', 0);
+    return vehicleConsumption(rows
+        .map((r) => ConsumptionEntry(
+              date: DateTime.tryParse(r['date']?.toString() ?? ''),
+              mileage: (r['mileage'] as num?)?.toDouble() ?? 0,
+              liters: (r['liters'] as num?)?.toDouble() ?? 0,
+              isTankFull: (r['is_tank_full'] as bool?) ?? false,
+            ))
+        .toList());
   }
 
   static Future<List<EnergyLog>> fetchEnergyLogs(String vehicleId) async {

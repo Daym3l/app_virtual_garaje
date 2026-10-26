@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/consumption.dart';
+import 'fuel_service.dart';
 
 enum AlertLevel { error, warning, info }
 
@@ -71,7 +72,7 @@ class DashboardService {
     final monthStart = DateTime(now.year, now.month, 1).toIso8601String();
     final today = DateTime(now.year, now.month, now.day).toIso8601String().split('T').first;
 
-    final futures = await Future.wait([
+    final (futures, consumption) = await (Future.wait<List<dynamic>>([
       // Last fuel/energy log
       isElectric
           ? _db
@@ -86,15 +87,6 @@ class DashboardService {
               .eq('vehicle_id', vehicleId)
               .order('date', ascending: false)
               .limit(1),
-
-      // Fuel logs for consumption calc (full-to-full)
-      isElectric
-          ? Future.value(<dynamic>[])
-          : _db
-              .from('fuel_logs')
-              .select('date, mileage, liters, is_tank_full')
-              .eq('vehicle_id', vehicleId)
-              .gt('mileage', 0),
 
       // All pending maintenances with next_date or next_mileage
       _db
@@ -127,13 +119,16 @@ class DashboardService {
             .order('date', ascending: false)
             .limit(1),
       ]),
-    ]);
+    ]),
+    isElectric
+        ? Future<VehicleConsumption?>.value(null)
+        : FuelService.fetchConsumption(vehicleId),
+    ).wait;
 
     final lastLog = futures[0];
-    final consumptionLogs = futures[1];
-    final maintLogs = futures[2];
-    final warrantyLogs = futures[3];
-    final kmFutures = futures[4] as List<List<dynamic>>;
+    final maintLogs = futures[1];
+    final warrantyLogs = futures[2];
+    final kmFutures = futures[3] as List<List<dynamic>>;
     final mileageLogsThisMonth = kmFutures[0];
     final mileageLogsBaseline = kmFutures[1];
 
@@ -154,18 +149,8 @@ class DashboardService {
 
     // Consumo reciente: mismo cálculo que la web (vehicleConsumption)
     double? avgConsumption;
-    if (!isElectric && consumptionLogs.isNotEmpty) {
-      final entries = consumptionLogs
-          .map((r) => ConsumptionEntry(
-                date: DateTime.tryParse(r['date']?.toString() ?? ''),
-                mileage: (r['mileage'] as num?)?.toDouble() ?? 0,
-                liters: (r['liters'] as num?)?.toDouble() ?? 0,
-                isTankFull: (r['is_tank_full'] as bool?) ?? false,
-              ))
-          .toList();
-      final l100km = vehicleConsumption(entries, now: now).recent;
-      if (l100km != null && l100km > 0) avgConsumption = 100 / l100km;
-    }
+    final l100km = consumption?.recent;
+    if (l100km != null && l100km > 0) avgConsumption = 100 / l100km;
 
     // Alerts
     final alerts = _buildAlerts(maintLogs, currentMileage, now);

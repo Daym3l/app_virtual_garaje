@@ -6,6 +6,7 @@ import '../models/vehicle.dart';
 import '../services/fuel_service.dart';
 import '../services/odometer_service.dart';
 import '../services/suggestions_service.dart';
+import '../utils/consumption.dart';
 import '../widgets/autocomplete_field.dart';
 
 class FuelScreen extends StatefulWidget {
@@ -26,6 +27,7 @@ class FuelScreen extends StatefulWidget {
 class _FuelScreenState extends State<FuelScreen> {
   List<FuelLog> _fuelLogs = [];
   List<EnergyLog> _energyLogs = [];
+  VehicleConsumption? _consumption;
   bool _loading = true;
 
   bool get _isElectric => widget.vehicle.isElectric;
@@ -50,8 +52,11 @@ class _FuelScreenState extends State<FuelScreen> {
       final logs = await FuelService.fetchEnergyLogs(widget.vehicle.id);
       if (mounted) setState(() { _energyLogs = logs; _loading = false; });
     } else {
-      final logs = await FuelService.fetchFuelLogs(widget.vehicle.id);
-      if (mounted) setState(() { _fuelLogs = logs; _loading = false; });
+      final (logs, consumption) = await (
+        FuelService.fetchFuelLogs(widget.vehicle.id),
+        FuelService.fetchConsumption(widget.vehicle.id),
+      ).wait;
+      if (mounted) setState(() { _fuelLogs = logs; _consumption = consumption; _loading = false; });
     }
   }
 
@@ -83,6 +88,7 @@ class _FuelScreenState extends State<FuelScreen> {
               vehicle: widget.vehicle,
               fuelLogs: _fuelLogs,
               energyLogs: _energyLogs,
+              consumption: _consumption,
               accentColor: accentColor,
             ),
           ),
@@ -133,11 +139,13 @@ class _FuelHeader extends StatelessWidget {
     required this.vehicle,
     required this.fuelLogs,
     required this.energyLogs,
+    required this.consumption,
     required this.accentColor,
   });
   final Vehicle vehicle;
   final List<FuelLog> fuelLogs;
   final List<EnergyLog> energyLogs;
+  final VehicleConsumption? consumption;
   final Color accentColor;
 
   @override
@@ -154,13 +162,10 @@ class _FuelHeader extends StatelessWidget {
     } else if (!isElectric && fuelLogs.isNotEmpty) {
       final totalL = fuelLogs.fold(0.0, (s, l) => s + l.liters);
       final totalCost = fuelLogs.fold(0.0, (s, l) => s + l.cost);
-      final withConsumption = fuelLogs.where((l) => l.consumption != null).toList();
       totalStr = '${totalL.toStringAsFixed(1)} L';
       costStr = '\$${totalCost.toStringAsFixed(2)}';
-      if (withConsumption.isNotEmpty) {
-        final avg = withConsumption.fold(0.0, (s, l) => s + l.consumption!) / withConsumption.length;
-        avgStr = '${avg.toStringAsFixed(1)} L/100km';
-      }
+      final recent = consumption?.recent;
+      if (recent != null) avgStr = '${recent.toStringAsFixed(1)} L/100km';
     }
 
     return Container(
