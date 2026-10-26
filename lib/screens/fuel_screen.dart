@@ -5,7 +5,10 @@ import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/fuel_service.dart';
 import '../services/odometer_service.dart';
+import '../services/settings_service.dart';
 import '../services/suggestions_service.dart';
+import '../utils/consumption.dart';
+import '../utils/units.dart';
 import '../widgets/autocomplete_field.dart';
 
 class FuelScreen extends StatefulWidget {
@@ -26,6 +29,9 @@ class FuelScreen extends StatefulWidget {
 class _FuelScreenState extends State<FuelScreen> {
   List<FuelLog> _fuelLogs = [];
   List<EnergyLog> _energyLogs = [];
+  VehicleConsumption? _consumption;
+  FuelTotals? _totals;
+  FuelUnit _fuelUnit = FuelUnit.liters;
   bool _loading = true;
 
   bool get _isElectric => widget.vehicle.isElectric;
@@ -47,11 +53,19 @@ class _FuelScreenState extends State<FuelScreen> {
     setState(() => _loading = true);
     await widget.onVehicleUpdated();
     if (_isElectric) {
-      final logs = await FuelService.fetchEnergyLogs(widget.vehicle.id);
-      if (mounted) setState(() { _energyLogs = logs; _loading = false; });
+      final (logs, totals) = await (
+        FuelService.fetchEnergyLogs(widget.vehicle.id),
+        FuelService.fetchTotals(widget.vehicle.id, isElectric: true),
+      ).wait;
+      if (mounted) setState(() { _energyLogs = logs; _totals = totals; _loading = false; });
     } else {
-      final logs = await FuelService.fetchFuelLogs(widget.vehicle.id);
-      if (mounted) setState(() { _fuelLogs = logs; _loading = false; });
+      final (logs, totals, consumption, fuelUnit) = await (
+        FuelService.fetchFuelLogs(widget.vehicle.id),
+        FuelService.fetchTotals(widget.vehicle.id, isElectric: false),
+        FuelService.fetchConsumption(widget.vehicle.id),
+        SettingsService.fetchFuelUnit(),
+      ).wait;
+      if (mounted) setState(() { _fuelLogs = logs; _totals = totals; _consumption = consumption; _fuelUnit = fuelUnit; _loading = false; });
     }
   }
 
@@ -81,8 +95,9 @@ class _FuelScreenState extends State<FuelScreen> {
           SliverToBoxAdapter(
             child: _FuelHeader(
               vehicle: widget.vehicle,
-              fuelLogs: _fuelLogs,
-              energyLogs: _energyLogs,
+              totals: _totals,
+              consumption: _consumption,
+              fuelUnit: _fuelUnit,
               accentColor: accentColor,
             ),
           ),
@@ -117,7 +132,7 @@ class _FuelScreenState extends State<FuelScreen> {
                         childCount: _energyLogs.length,
                       )
                     : SliverChildBuilderDelegate(
-                        (_, i) => _FuelCard(log: _fuelLogs[i]),
+                        (_, i) => _FuelCard(log: _fuelLogs[i], fuelUnit: _fuelUnit),
                         childCount: _fuelLogs.length,
                       ),
               ),
@@ -131,13 +146,15 @@ class _FuelScreenState extends State<FuelScreen> {
 class _FuelHeader extends StatelessWidget {
   const _FuelHeader({
     required this.vehicle,
-    required this.fuelLogs,
-    required this.energyLogs,
+    required this.totals,
+    required this.consumption,
+    required this.fuelUnit,
     required this.accentColor,
   });
   final Vehicle vehicle;
-  final List<FuelLog> fuelLogs;
-  final List<EnergyLog> energyLogs;
+  final FuelTotals? totals;
+  final VehicleConsumption? consumption;
+  final FuelUnit fuelUnit;
   final Color accentColor;
 
   @override
@@ -147,20 +164,15 @@ class _FuelHeader extends StatelessWidget {
     String costStr = '—';
     String avgStr = '—';
 
-    if (isElectric && energyLogs.isNotEmpty) {
-      final totalEnergy = energyLogs.fold(0.0, (s, l) => s + l.energyAdded);
-      totalStr = '${totalEnergy.toStringAsFixed(1)} kWh';
-      costStr = '${energyLogs.length} cargas';
-    } else if (!isElectric && fuelLogs.isNotEmpty) {
-      final totalL = fuelLogs.fold(0.0, (s, l) => s + l.liters);
-      final totalCost = fuelLogs.fold(0.0, (s, l) => s + l.cost);
-      final withConsumption = fuelLogs.where((l) => l.consumption != null).toList();
-      totalStr = '${totalL.toStringAsFixed(1)} L';
-      costStr = '\$${totalCost.toStringAsFixed(2)}';
-      if (withConsumption.isNotEmpty) {
-        final avg = withConsumption.fold(0.0, (s, l) => s + l.consumption!) / withConsumption.length;
-        avgStr = '${avg.toStringAsFixed(1)} L/100km';
-      }
+    final t = totals;
+    if (t != null && t.count > 0 && isElectric) {
+      totalStr = '${t.amount.toStringAsFixed(1)} kWh';
+      costStr = '${t.count} cargas';
+    } else if (t != null && t.count > 0) {
+      totalStr = '${t.amount.toStringAsFixed(1)} L';
+      costStr = '\$${t.cost.toStringAsFixed(2)}';
+      final recent = consumption?.recent;
+      if (recent != null) avgStr = _fmtConsumption(recent, fuelUnit);
     }
 
     return Container(
@@ -204,7 +216,10 @@ class _Cell extends StatelessWidget {
   }
 }
 
-void _showFuelDetail(BuildContext context, FuelLog log) {
+String _fmtConsumption(double l100km, FuelUnit unit) =>
+    '${consumptionToDisplay(l100km, unit).toStringAsFixed(1)} ${consumptionLabel(unit)}';
+
+void _showFuelDetail(BuildContext context, FuelLog log, FuelUnit fuelUnit) {
   showModalBottomSheet(
     context: context,
     backgroundColor: Colors.transparent,
@@ -218,7 +233,7 @@ void _showFuelDetail(BuildContext context, FuelLog log) {
         _DetailRow('Costo', '\$${log.cost.toStringAsFixed(2)}'),
         _DetailRow('Precio/L', log.costPerLiter != null ? '\$${log.costPerLiter!.toStringAsFixed(3)}/L' : '—'),
         _DetailRow('Odómetro', '${log.mileage.toStringAsFixed(0)} km'),
-        if (log.consumption != null) _DetailRow('Consumo', '${log.consumption!.toStringAsFixed(1)} L/100km'),
+        if (log.consumption != null) _DetailRow('Consumo', _fmtConsumption(log.consumption!, fuelUnit)),
         if (log.station?.isNotEmpty == true) _DetailRow('Estación', log.station!),
         _DetailRow('Tanque lleno', log.isTankFull ? 'Sí' : 'No'),
       ],
@@ -252,13 +267,14 @@ String _fmtDate(DateTime d) =>
     '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
 class _FuelCard extends StatelessWidget {
-  const _FuelCard({required this.log});
+  const _FuelCard({required this.log, required this.fuelUnit});
   final FuelLog log;
+  final FuelUnit fuelUnit;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () => _showFuelDetail(context, log),
+      onTap: () => _showFuelDetail(context, log, fuelUnit),
       child: Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -299,7 +315,7 @@ class _FuelCard extends StatelessWidget {
               Text('\$${log.cost.toStringAsFixed(2)}', style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
               Text(_dateStr(log.date), style: GoogleFonts.inter(fontSize: 11, color: AppColors.textTertiary)),
               if (log.consumption != null)
-                Text('${log.consumption!.toStringAsFixed(1)} L/100km', style: GoogleFonts.jetBrainsMono(fontSize: 9, color: AppColors.accent)),
+                Text(_fmtConsumption(log.consumption!, fuelUnit), style: GoogleFonts.jetBrainsMono(fontSize: 9, color: AppColors.accent)),
             ],
           ),
         ],

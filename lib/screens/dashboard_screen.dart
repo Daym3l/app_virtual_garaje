@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
 import '../models/vehicle.dart';
 import '../services/dashboard_service.dart';
+import '../utils/units.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({
@@ -178,9 +179,12 @@ class _HeroCard extends StatelessWidget {
                 child: _HeroCell(
                   label: 'EFICIENCIA',
                   value: data?.avgConsumption != null
-                      ? data!.avgConsumption!.toStringAsFixed(1)
+                      ? consumptionToDisplay(data!.avgConsumption!, data!.fuelUnit)
+                          .toStringAsFixed(1)
                       : '—',
-                  unit: vehicle.isElectric ? 'kWh/100km' : 'km/L',
+                  unit: vehicle.isElectric
+                      ? 'kWh/100km'
+                      : consumptionLabel(data?.fuelUnit ?? FuelUnit.liters),
                 ),
               ),
             ],

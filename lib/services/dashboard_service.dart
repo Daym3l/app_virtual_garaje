@@ -1,5 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/consumption.dart';
+import '../utils/units.dart';
+import 'fuel_service.dart';
+import 'settings_service.dart';
 
 enum AlertLevel { error, warning, info }
 
@@ -37,6 +40,7 @@ class DashboardData {
     required this.lastFuelLiters,
     required this.lastFuelCost,
     required this.avgConsumption,
+    required this.fuelUnit,
     required this.alerts,
     required this.warranties,
     required this.kmThisMonth,
@@ -45,7 +49,9 @@ class DashboardData {
   final DateTime? lastFuelDate;
   final double? lastFuelLiters;
   final double? lastFuelCost;
+  /// L/100km; se convierte a la unidad del usuario al mostrarlo.
   final double? avgConsumption;
+  final FuelUnit fuelUnit;
   final List<MaintenanceAlert> alerts;
   final List<WarrantyAlert> warranties;
   final double kmThisMonth;
@@ -71,7 +77,7 @@ class DashboardService {
     final monthStart = DateTime(now.year, now.month, 1).toIso8601String();
     final today = DateTime(now.year, now.month, now.day).toIso8601String().split('T').first;
 
-    final futures = await Future.wait([
+    final (futures, consumption, fuelUnit) = await (Future.wait<List<dynamic>>([
       // Last fuel/energy log
       isElectric
           ? _db
@@ -86,17 +92,6 @@ class DashboardService {
               .eq('vehicle_id', vehicleId)
               .order('date', ascending: false)
               .limit(1),
-
-      // Fuel logs for consumption calc (full-to-full)
-      isElectric
-          ? Future.value(<dynamic>[])
-          : _db
-              .from('fuel_logs')
-              .select('mileage, liters, is_tank_full')
-              .eq('vehicle_id', vehicleId)
-              .gt('mileage', 0)
-              .order('mileage', ascending: false)
-              .limit(100),
 
       // All pending maintenances with next_date or next_mileage
       _db
@@ -115,7 +110,7 @@ class DashboardService {
           .order('warranty_until', ascending: true),
 
       // Km this month + baseline
-      Future.wait([
+      Future.wait<List<dynamic>>([
         _db
             .from('mileage_logs')
             .select('mileage')
@@ -129,13 +124,17 @@ class DashboardService {
             .order('date', ascending: false)
             .limit(1),
       ]),
-    ]);
+    ]),
+    isElectric
+        ? Future<VehicleConsumption?>.value(null)
+        : FuelService.fetchConsumption(vehicleId),
+    SettingsService.fetchFuelUnit(),
+    ).wait;
 
     final lastLog = futures[0];
-    final consumptionLogs = futures[1];
-    final maintLogs = futures[2];
-    final warrantyLogs = futures[3];
-    final kmFutures = futures[4] as List<List<dynamic>>;
+    final maintLogs = futures[1];
+    final warrantyLogs = futures[2];
+    final kmFutures = futures[3] as List<List<dynamic>>;
     final mileageLogsThisMonth = kmFutures[0];
     final mileageLogsBaseline = kmFutures[1];
 
@@ -154,21 +153,8 @@ class DashboardService {
       }
     }
 
-    // Avg consumption (full-to-full: acumula parciales entre tanques llenos)
-    double? avgConsumption;
-    if (!isElectric && consumptionLogs.isNotEmpty) {
-      final entries = consumptionLogs
-          .map((r) => ConsumptionEntry(
-                mileage: (r['mileage'] as num?)?.toDouble() ?? 0,
-                liters: (r['liters'] as num?)?.toDouble() ?? 0,
-                isTankFull: (r['is_tank_full'] as bool?) ?? false,
-              ))
-          .toList();
-      final result = computeConsumption(entries);
-      if (result.avgL100km != null && result.avgL100km! > 0) {
-        avgConsumption = 100 / result.avgL100km!;
-      }
-    }
+    // Consumo reciente: mismo cálculo que la web (vehicleConsumption)
+    final avgConsumption = consumption?.recent;
 
     // Alerts
     final alerts = _buildAlerts(maintLogs, currentMileage, now);
@@ -195,6 +181,7 @@ class DashboardService {
       lastFuelLiters: lastFuelLiters,
       lastFuelCost: lastFuelCost,
       avgConsumption: avgConsumption,
+      fuelUnit: fuelUnit,
       alerts: alerts,
       warranties: warranties,
       kmThisMonth: kmThisMonth,
