@@ -110,7 +110,7 @@ class DashboardService {
           .order('warranty_until', ascending: true),
 
       // Km this month + baseline
-      Future.wait([
+      Future.wait<List<dynamic>>([
         _db
             .from('mileage_logs')
             .select('mileage')
