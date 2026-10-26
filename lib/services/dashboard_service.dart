@@ -92,11 +92,9 @@ class DashboardService {
           ? Future.value(<dynamic>[])
           : _db
               .from('fuel_logs')
-              .select('mileage, liters, is_tank_full')
+              .select('date, mileage, liters, is_tank_full')
               .eq('vehicle_id', vehicleId)
-              .gt('mileage', 0)
-              .order('mileage', ascending: false)
-              .limit(100),
+              .gt('mileage', 0),
 
       // All pending maintenances with next_date or next_mileage
       _db
@@ -154,20 +152,19 @@ class DashboardService {
       }
     }
 
-    // Avg consumption (full-to-full: acumula parciales entre tanques llenos)
+    // Consumo reciente: mismo cálculo que la web (vehicleConsumption)
     double? avgConsumption;
     if (!isElectric && consumptionLogs.isNotEmpty) {
       final entries = consumptionLogs
           .map((r) => ConsumptionEntry(
+                date: DateTime.tryParse(r['date']?.toString() ?? ''),
                 mileage: (r['mileage'] as num?)?.toDouble() ?? 0,
                 liters: (r['liters'] as num?)?.toDouble() ?? 0,
                 isTankFull: (r['is_tank_full'] as bool?) ?? false,
               ))
           .toList();
-      final result = computeConsumption(entries);
-      if (result.avgL100km != null && result.avgL100km! > 0) {
-        avgConsumption = 100 / result.avgL100km!;
-      }
+      final l100km = vehicleConsumption(entries, now: now).recent;
+      if (l100km != null && l100km > 0) avgConsumption = 100 / l100km;
     }
 
     // Alerts
