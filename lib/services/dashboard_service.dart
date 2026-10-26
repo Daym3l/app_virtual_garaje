@@ -1,6 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/consumption.dart';
+import '../utils/units.dart';
 import 'fuel_service.dart';
+import 'settings_service.dart';
 
 enum AlertLevel { error, warning, info }
 
@@ -38,6 +40,7 @@ class DashboardData {
     required this.lastFuelLiters,
     required this.lastFuelCost,
     required this.avgConsumption,
+    required this.fuelUnit,
     required this.alerts,
     required this.warranties,
     required this.kmThisMonth,
@@ -46,7 +49,9 @@ class DashboardData {
   final DateTime? lastFuelDate;
   final double? lastFuelLiters;
   final double? lastFuelCost;
+  /// L/100km; se convierte a la unidad del usuario al mostrarlo.
   final double? avgConsumption;
+  final FuelUnit fuelUnit;
   final List<MaintenanceAlert> alerts;
   final List<WarrantyAlert> warranties;
   final double kmThisMonth;
@@ -72,7 +77,7 @@ class DashboardService {
     final monthStart = DateTime(now.year, now.month, 1).toIso8601String();
     final today = DateTime(now.year, now.month, now.day).toIso8601String().split('T').first;
 
-    final (futures, consumption) = await (Future.wait<List<dynamic>>([
+    final (futures, consumption, fuelUnit) = await (Future.wait<List<dynamic>>([
       // Last fuel/energy log
       isElectric
           ? _db
@@ -123,6 +128,7 @@ class DashboardService {
     isElectric
         ? Future<VehicleConsumption?>.value(null)
         : FuelService.fetchConsumption(vehicleId),
+    SettingsService.fetchFuelUnit(),
     ).wait;
 
     final lastLog = futures[0];
@@ -148,9 +154,7 @@ class DashboardService {
     }
 
     // Consumo reciente: mismo cálculo que la web (vehicleConsumption)
-    double? avgConsumption;
-    final l100km = consumption?.recent;
-    if (l100km != null && l100km > 0) avgConsumption = 100 / l100km;
+    final avgConsumption = consumption?.recent;
 
     // Alerts
     final alerts = _buildAlerts(maintLogs, currentMileage, now);
@@ -177,6 +181,7 @@ class DashboardService {
       lastFuelLiters: lastFuelLiters,
       lastFuelCost: lastFuelCost,
       avgConsumption: avgConsumption,
+      fuelUnit: fuelUnit,
       alerts: alerts,
       warranties: warranties,
       kmThisMonth: kmThisMonth,
