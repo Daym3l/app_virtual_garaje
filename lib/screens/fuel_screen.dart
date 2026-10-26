@@ -30,6 +30,7 @@ class _FuelScreenState extends State<FuelScreen> {
   List<FuelLog> _fuelLogs = [];
   List<EnergyLog> _energyLogs = [];
   VehicleConsumption? _consumption;
+  FuelTotals? _totals;
   FuelUnit _fuelUnit = FuelUnit.liters;
   bool _loading = true;
 
@@ -52,15 +53,19 @@ class _FuelScreenState extends State<FuelScreen> {
     setState(() => _loading = true);
     await widget.onVehicleUpdated();
     if (_isElectric) {
-      final logs = await FuelService.fetchEnergyLogs(widget.vehicle.id);
-      if (mounted) setState(() { _energyLogs = logs; _loading = false; });
+      final (logs, totals) = await (
+        FuelService.fetchEnergyLogs(widget.vehicle.id),
+        FuelService.fetchTotals(widget.vehicle.id, isElectric: true),
+      ).wait;
+      if (mounted) setState(() { _energyLogs = logs; _totals = totals; _loading = false; });
     } else {
-      final (logs, consumption, fuelUnit) = await (
+      final (logs, totals, consumption, fuelUnit) = await (
         FuelService.fetchFuelLogs(widget.vehicle.id),
+        FuelService.fetchTotals(widget.vehicle.id, isElectric: false),
         FuelService.fetchConsumption(widget.vehicle.id),
         SettingsService.fetchFuelUnit(),
       ).wait;
-      if (mounted) setState(() { _fuelLogs = logs; _consumption = consumption; _fuelUnit = fuelUnit; _loading = false; });
+      if (mounted) setState(() { _fuelLogs = logs; _totals = totals; _consumption = consumption; _fuelUnit = fuelUnit; _loading = false; });
     }
   }
 
@@ -90,8 +95,7 @@ class _FuelScreenState extends State<FuelScreen> {
           SliverToBoxAdapter(
             child: _FuelHeader(
               vehicle: widget.vehicle,
-              fuelLogs: _fuelLogs,
-              energyLogs: _energyLogs,
+              totals: _totals,
               consumption: _consumption,
               fuelUnit: _fuelUnit,
               accentColor: accentColor,
@@ -142,15 +146,13 @@ class _FuelScreenState extends State<FuelScreen> {
 class _FuelHeader extends StatelessWidget {
   const _FuelHeader({
     required this.vehicle,
-    required this.fuelLogs,
-    required this.energyLogs,
+    required this.totals,
     required this.consumption,
     required this.fuelUnit,
     required this.accentColor,
   });
   final Vehicle vehicle;
-  final List<FuelLog> fuelLogs;
-  final List<EnergyLog> energyLogs;
+  final FuelTotals? totals;
   final VehicleConsumption? consumption;
   final FuelUnit fuelUnit;
   final Color accentColor;
@@ -162,15 +164,13 @@ class _FuelHeader extends StatelessWidget {
     String costStr = '—';
     String avgStr = '—';
 
-    if (isElectric && energyLogs.isNotEmpty) {
-      final totalEnergy = energyLogs.fold(0.0, (s, l) => s + l.energyAdded);
-      totalStr = '${totalEnergy.toStringAsFixed(1)} kWh';
-      costStr = '${energyLogs.length} cargas';
-    } else if (!isElectric && fuelLogs.isNotEmpty) {
-      final totalL = fuelLogs.fold(0.0, (s, l) => s + l.liters);
-      final totalCost = fuelLogs.fold(0.0, (s, l) => s + l.cost);
-      totalStr = '${totalL.toStringAsFixed(1)} L';
-      costStr = '\$${totalCost.toStringAsFixed(2)}';
+    final t = totals;
+    if (t != null && t.count > 0 && isElectric) {
+      totalStr = '${t.amount.toStringAsFixed(1)} kWh';
+      costStr = '${t.count} cargas';
+    } else if (t != null && t.count > 0) {
+      totalStr = '${t.amount.toStringAsFixed(1)} L';
+      costStr = '\$${t.cost.toStringAsFixed(2)}';
       final recent = consumption?.recent;
       if (recent != null) avgStr = _fmtConsumption(recent, fuelUnit);
     }

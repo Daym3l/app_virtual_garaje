@@ -76,6 +76,15 @@ class EnergyLog {
       );
 }
 
+class FuelTotals {
+  const FuelTotals({required this.amount, required this.cost, required this.count});
+
+  /// Litros (combustión) o kWh (eléctrico).
+  final double amount;
+  final double cost;
+  final int count;
+}
+
 class FuelService {
   static SupabaseClient get _db => Supabase.instance.client;
 
@@ -105,6 +114,20 @@ class FuelService {
               isTankFull: (r['is_tank_full'] as bool?) ?? false,
             ))
         .toList());
+  }
+
+  /// Totales sobre TODAS las cargas; la lista solo trae las últimas 50.
+  static Future<FuelTotals> fetchTotals(String vehicleId, {required bool isElectric}) async {
+    final List<Map<String, dynamic>> rows = isElectric
+        ? await _db.from('energy_logs').select('energy_added').eq('vehicle_id', vehicleId)
+        : await _db.from('fuel_logs').select('liters, cost').eq('vehicle_id', vehicleId);
+    double sum(String key) =>
+        rows.fold(0.0, (s, r) => s + ((r[key] as num?)?.toDouble() ?? 0));
+    return FuelTotals(
+      amount: sum(isElectric ? 'energy_added' : 'liters'),
+      cost: isElectric ? 0 : sum('cost'),
+      count: rows.length,
+    );
   }
 
   static Future<List<EnergyLog>> fetchEnergyLogs(String vehicleId) async {
